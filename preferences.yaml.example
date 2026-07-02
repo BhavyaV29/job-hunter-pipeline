@@ -1,0 +1,25 @@
+# Copy to preferences.yaml and edit. Used by llm_filter.py when LLM_FILTER=1.
+
+blocklist_companies:
+  - SynergisticIT
+  - Talentzo
+  - Progressive Technology
+  - Fortified Infotech
+  - Blubridge
+  - CareerSprint
+  - Hackajob
+
+must_have_any:
+  - python
+  - go
+  - backend
+  - software engineer
+  - platform
+  - kubernetes
+  - machine learning
+  - ai engineer
+
+max_exp_years: 2
+
+# Companies you always want surfaced (+50 already in sources.yaml dream_companies)
+priority_companies: []

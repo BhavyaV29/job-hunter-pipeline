@@ -1,0 +1,31 @@
+# Secrets / credentials — NEVER commit
+.env
+*.env
+!.env.example
+service_account*.json
+*service-account*.json
+*credentials*.json
+
+# Local pipeline state & personal data
+tracker.csv
+tracker.csv.bak
+.fetch_state.json
+.jd_cache.json
+preferences.yaml
+*.predupe
+*.bak
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+.uv/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

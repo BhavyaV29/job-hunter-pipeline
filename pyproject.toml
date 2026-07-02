@@ -1,0 +1,21 @@
+[project]
+name = "jobsearch"
+version = "0.2.0"
+description = "Personal job sourcing and outreach pipeline"
+requires-python = ">=3.9"
+dependencies = [
+    "httpx>=0.27",
+    "requests>=2.31",
+    "pyyaml>=6.0",
+    "beautifulsoup4>=4.12",
+    "gspread>=5.12",
+    "google-auth>=2.29",
+]
+
+[project.optional-dependencies]
+playwright = ["playwright>=1.40"]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

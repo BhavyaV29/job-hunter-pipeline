@@ -1,0 +1,338 @@
+# Target companies for the Tier-1 sourcing pipeline.
+# Each company: which ATS it uses + its board "token" (the slug in its careers URL).
+#
+# How to find a token (open the URL, the last path segment is the token):
+#   greenhouse : boards.greenhouse.io/<token>   or job-boards.greenhouse.io/<token>
+#   lever      : jobs.lever.co/<token>
+#   ashby      : jobs.ashbyhq.com/<token>
+#   workable   : apply.workable.com/<token>
+#   recruitee  : <token>.recruitee.com
+#
+# The list below is a STARTER set - some tokens may be wrong/moved; the pipeline
+# skips failures and reports them so you can fix or drop them. Add YOUR real targets
+# (especially India startups + the companies on your outreach/targets.md list).
+
+# ---- Filtering: edit freely. A role is kept if its title matches an include
+#      keyword, has no exclude keyword, and (if location_include is non-empty)
+#      its location matches one of those substrings. All case-insensitive. ----
+filters:
+  # ---- Salary floors (lakhs/annum). A role is dropped ONLY if it advertises a
+  #      salary we can parse to an annual-INR figure BELOW its floor. Roles with
+  #      missing/unparseable salary are KEPT (no-salary + good-company roles are
+  #      intentionally retained — "decent company, benefit of the doubt"). Non-INR
+  #      salaries are converted with the approximate FX constants near the top of
+  #      fetch_jobs.py.
+  #        min_salary_lpa    — floor for India ONSITE roles (default 10).
+  #        remote_floor_lpa  — floor for India-eligible REMOTE roles (default 7;
+  #                            remote pay runs lower but is still worth keeping).
+  #      See the 4-tier ranking in score.py (T1 remote>=10 > T2 onsite>=10 >
+  #      T3 remote 7-10 > T4 unknown). ----
+  min_salary_lpa: 10
+  remote_floor_lpa: 7
+  expiry_warn_days: 7      # T1/T2 roles expiring within this window get urgency boost + CLOSING SOON
+  # Fresher profile (~6 months exp): drop senior roles and 3+ yr requirements at fetch time.
+  drop_exp_bad: true
+  max_exp_years: 2
+  # Do NOT auto-remove rows from tracker unless YOU mark not_applicable in Sheet.
+  drop_expired_at_fetch: true
+  auto_prune_geo_failures: true   # remove US-onsite / remote-US rows; keeps global/USD remote
+  title_include:
+    - backend
+    - "back end"
+    - software engineer
+    - "software engineer 1"
+    - software developer
+    - platform
+    - infrastructure
+    - distributed
+    - "site reliability"
+    - sre
+    - "machine learning"
+    - "ml engineer"
+    - "ai engineer"
+    - "applied ai"
+    - golang
+    - python
+    # ---- fresher / new-grad / entry-level signals (engineering-anchored to
+    #      avoid matching e.g. "Support Associate" / "Scheduling Coordinator") ----
+    - "new grad"
+    - "new graduate"
+    - "graduate engineer"
+    - "graduate software"
+    - "graduate developer"
+    - "entry level software"
+    - "entry-level software"
+    - "associate software"
+    - "associate engineer"
+    - "associate developer"
+    - "junior software"
+    - "junior developer"
+    - "junior engineer"
+    - fresher
+    - trainee
+    - "early career"
+    - "campus"
+    - sde
+    - "sde 1"
+    - "sde i"
+    - "sde-1"
+    - "software engineer i"
+    - mle
+    - "0-1 years"
+    - "0 to 1"
+    - "6 months"
+    - "associate software engineer"
+  title_exclude:
+    - senior
+    - "sr."
+    - "sr "
+    - staff
+    - principal
+    - lead
+    - manager
+    - director
+    - intern            # drops LinkedIn f_E=1 internships + "internship" titles
+    - "vice president"
+    - vp
+    - head of
+    - architect         # typically senior (incl. "solutions architect")
+    # seniority by level marker (keep SDE 1 / Engineer I, drop II/III/IV)
+    - " ii"
+    - " iii"
+    - " iv"
+    - "sde 2"
+    - "sde-2"
+    - "sde ii"
+    - "level 2"
+    # non-engineering noise
+    - "account executive"
+    - sales
+    - recruiter
+    - marketing
+    - designer
+    - counsel
+    - finance
+    - accountant
+    - "customer success"
+    - "technical support"
+    - coordinator
+    - "supply chain"
+    - "support associate"
+    - "account manager"
+    - consultant
+    - "5+ years"
+    - "5 years"
+    - "3+ years"
+    - "4+ years"
+    - "minimum 3"
+    - "minimum 4"
+    - "minimum 5"
+  location_include:        # empty list = allow all locations
+    # Bias hard toward India + remote. US/EU onsite excluded by passes_geo_salary()
+    # at filter time — do NOT add "united states", "emea", etc. here.
+    # "remote" catches "US - Remote", "Remote-USA", etc. without letting through
+    # US-onsite roles (those get geo_drop'd by passes_geo_salary).
+    - remote
+    - worldwide          # common remote-board phrasing (Remotive/RemoteOK)
+    - anywhere
+    - global
+    - india
+    - bangalore
+    - bengaluru
+    - gurgaon
+    - gurugram
+    - hyderabad
+    - pune
+    - delhi
+    - noida
+    - mumbai
+    - chennai
+    - kolkata
+    - chandigarh
+    - jaipur
+    - ahmedabad
+    - kochi
+    - karnataka
+    - telangana
+    - maharashtra
+    - haryana
+
+# Personal priority targets — +50 score boost in score.py (floats to top of tier).
+dream_companies:
+  - razorpay
+  - postman
+  - cred
+  - meesho
+  - groww
+  - phonepe
+  - slice
+  - chargebee
+  - stripe
+  - databricks
+  - linear
+  - inmobi
+  - quantiphi
+  - wissen
+
+companies:
+  # ---- Greenhouse (high-confidence starters) ----
+  - { name: Stripe,      ats: greenhouse, token: stripe }
+  - { name: Databricks,  ats: greenhouse, token: databricks }
+  - { name: Coinbase,    ats: greenhouse, token: coinbase }
+  - { name: Dropbox,     ats: greenhouse, token: dropbox }
+  - { name: Airbnb,      ats: greenhouse, token: airbnb }
+
+  # ---- Lever (verify: jobs.lever.co/<token>) ----
+  # NOTE: these two failed verification on 1st run - find their real boards before re-enabling.
+  # - { name: Plaid,     ats: lever,      token: plaid }    # returned 0 - likely moved ATS
+  # - { name: Netlify,   ats: lever,      token: netlify }  # HTTPError - wrong token
+
+  # ---- Ashby (verify: jobs.ashbyhq.com/<token>) ----
+  - { name: Linear,      ats: ashby,      token: linear }
+  - { name: Ramp,        ats: ashby,      token: ramp }
+
+  # ---- India startups (verify tokens on careers page; pipeline skips failures) ----
+  - { name: Razorpay,   ats: greenhouse, token: razorpaysoftwareprivatelimited }
+  - { name: Postman,    ats: greenhouse, token: postman }
+  - { name: Meesho,     ats: lever,      token: meesho }
+  - { name: CRED,       ats: lever,      token: cred }
+  - { name: Groww,      ats: greenhouse, token: groww }
+  - { name: Slice,      ats: greenhouse, token: slice }
+  - { name: PhonePe,    ats: greenhouse, token: phonepe }
+  # Workday/SmartRecruiters tokens often 404 without tenant-specific setup — use aggregators instead:
+  # - { name: BrowserStack, ats: workday,  token: browserstack.wd3/browserstack/External }
+  # - { name: Freshworks, ats: smartrecruiters, token: Freshworks }
+  - { name: Chargebee,  ats: workable,   token: chargebee }
+  - { name: InMobi,     ats: greenhouse, token: inmobi }   # verified public API (2026-06)
+  # Moved ATS / no public API (still covered by JSearch/Adzuna/SerpApi aggregators):
+  # - { name: Swiggy,     ats: greenhouse, token: swiggy }      # custom careers portal
+  # - { name: Zomato,     ats: greenhouse, token: zomato }      # eternal.com custom portal
+  # - { name: Dunzo,      ats: lever,      token: dunzo }       # site offline / ATS moved
+  # - { name: Hasura,     ats: greenhouse, token: hasura }      # rebranded to PromptQL
+
+  # ---- Workable / Recruitee (uncomment + add tokens) ----
+  # - { name: Example,   ats: workable,   token: example }
+  # - { name: Example,   ats: recruitee,  token: example }
+
+# ---- Aggregator APIs ------------------------------------------------------
+# Cross-employer job indexes (free, no-auth except Adzuna). These surface the
+# same fresher/new-grad roles found on LinkedIn / Indeed / Naukri / Wellfound,
+# but via legitimate JSON APIs - we do NOT scrape those four sites directly
+# (their ToS forbid it, they're aggressively anti-bot, and it risks a ban).
+#
+# If you delete this whole block, fetch_jobs.py falls back to built-in defaults.
+aggregators:
+  # ---- keyless, always-on (global remote / EU-heavy) ----
+  - source: themuse           # free, no key; great for entry-level
+    categories: ["Software Engineering", "Data Science", "Data and Analytics", "Computer and IT"]
+    levels: ["Entry Level"]
+    pages: 3
+  - source: remotive          # free; worldwide remote (Remotive board)
+    categories: ["software-dev", "data", "devops"]
+  - source: remoteok          # free; global remote listings
+  - source: arbeitnow         # free; EU startup/tech board
+  - source: weworkremotely    # free RSS; global remote startups (programming + devops)
+
+  # ---- public / guest endpoints of consumer platforms (NO login, polite) ----
+  - source: linkedin_guest    # public LinkedIn jobs-guest cards (no auth)
+    locations: ["India", "Worldwide"]   # Worldwide = more global/remote startup hits
+    queries:
+      - "software engineer"
+      - "backend developer"
+      - "machine learning engineer"
+      - "sde"
+      - "python developer"
+      - "remote software engineer startup"
+      - "backend developer remote"
+    experience_levels: "1,2,3"  # 1=internship 2=entry 3=associate (interns dropped by title filter)
+    pages: 2                  # 10 cards/page; keep small + polite
+  - source: naukri            # jobapi → RSS → Playwright → JSearch → SerpApi
+    experience: 0
+    keywords:
+      - "software engineer fresher"
+      - "backend developer entry level"
+      - "sde fresher bangalore"
+      - "machine learning engineer fresher"
+      - "graduate software engineer"
+      - "python developer fresher"
+    results_per_keyword: 40
+    serpapi_queries:
+      - "site:naukri.com inurl:job-listings backend developer bangalore"
+      - "site:naukri.com inurl:job-listings software engineer india"
+      - "site:naukri.com inurl:job-listings machine learning fresher"
+  - source: hirist            # API + SerpApi site:hirist.com/j/ fallback
+    keywords:
+      - "software engineer fresher"
+      - "backend developer entry"
+      - "machine learning fresher"
+      - "python developer"
+      - "golang developer"
+    pages: 2
+    serpapi_queries:
+      - "site:hirist.com/j/ backend developer bangalore"
+      - "site:hirist.com/j/ software engineer india"
+      - "site:hirist.com/j/ machine learning engineer"
+  - source: cutshort          # city __NEXT_DATA__ pages (HTTP, no key)
+    city_paths:
+      - /jobs/backend-developer-jobs-in-bangalore-bengaluru
+      - /jobs/machine-learning-ml-jobs-in-bangalore-bengaluru
+      - /jobs/software-engineer-jobs-in-bangalore-bengaluru
+      - /jobs/backend-developer-jobs-in-delhi-ncr-gurgaon-noida
+      - /jobs/backend-developer-jobs-in-pune
+      - /jobs/fresher-jobs-in-bangalore-bengaluru
+  - source: wellfound         # SerpApi first, Playwright fallback
+    serpapi_queries:
+      - "site:wellfound.com/jobs backend engineer india"
+      - "site:wellfound.com/jobs software engineer bangalore startup"
+      - "site:wellfound.com/jobs machine learning engineer india"
+      - "site:wellfound.com/jobs sde fresher india"
+      - "site:wellfound.com/jobs seed stage backend india"
+      - "site:wellfound.com/jobs series a software engineer bangalore"
+      - "site:wellfound.com/jobs remote backend engineer europe"
+      - "site:wellfound.com/jobs remote software engineer worldwide startup"
+
+  # ---- OPTIONAL keyed sources (20h cooldown each unless --force) ----
+  - source: jsearch           # OPTIONAL - needs RAPIDAPI_KEY. Aggregates Google for
+    num_pages: 1              #   Jobs => LinkedIn / Indeed / Glassdoor / ZipRecruiter.
+    date_posted: month        #   all|today|3days|week|month
+    queries:
+      - "software engineer fresher in India"
+      - "backend developer entry level in India"
+      - "machine learning engineer fresher in India"
+      - "graduate software engineer India"
+      - "junior software engineer remote"
+      - "backend engineer entry level remote"
+      - "junior software engineer remote worldwide"
+      - "backend developer remote europe startup"
+      - "entry level software engineer remote global"
+      - "startup software engineer bangalore"
+      - "series a ml engineer india"
+      - "fintech backend developer india"
+      - "seed stage backend engineer india"
+      - "early employee software engineer bangalore"
+  - source: adzuna            # OPTIONAL - needs ADZUNA_APP_ID / ADZUNA_APP_KEY
+    # Free tier (official ToS): 25/min, 250/day, 2500/month — keep this block tiny.
+    # Use gb as an index only; queries target worldwide / work-from-anywhere remote
+    # (geo.py still drops US-only / region-locked remote after fetch).
+    countries: ["gb"]
+    max_calls: 4
+    queries:
+      - "remote software engineer work from anywhere"
+      - "remote backend developer worldwide"
+      - "junior software engineer remote global"
+      - "machine learning engineer remote worldwide"
+    results_per_page: 40
+  - source: serpapi           # OPTIONAL - needs SERPAPI_KEY. Google Jobs engine.
+    gl: "in"
+    queries:
+      - "software engineer fresher india"
+      - "backend developer entry level india"
+      - "machine learning engineer fresher india"
+      - "startup software engineer bangalore"
+      - "series a software engineer india"
+      - "fintech backend developer india"
+      - "remote software engineer worldwide startup"
+      - "junior backend developer remote europe"
+      - "remote software engineer japan english"
+      - "site:cutshort.io/job backend engineer startup bangalore"
+      - "site:hirist.com/j/ startup software engineer"
