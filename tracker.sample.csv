@@ -1,12 +1,12 @@
 date_found,company,score,stage,url,role,location,salary,deadline,source,applied_date,contact_name,contact_email,job_id,resume_variant,referral_contact,oa_date,phone_date,tech_date,onsite_date,offer_details,next_action,next_action_date,notes,exp_years,exp_match
-2026-07-02,Vercel,1063,sourced,https://demo.local/jobs/vercel-be,Backend Engineer (New Grad),Remote (India eligible),$90k-120k/yr,2026-07-20,jsearch,,,,vercel-be,backend,,,,,,,Apply,2026-07-08,Go + Postgres + edge [fit:88],1,good
-2026-07-01,Razorpay,1058,sourced,https://demo.local/jobs/rzp-sde1,SDE 1 - Payments,Bengaluru,₹18-26 LPA,2026-07-15,greenhouse,,,,rzp-sde1,backend,,,,,,,Apply,2026-07-07,dream co fintech backend [fit:90],1,good
-2026-07-02,Meesho,998,sourced,https://demo.local/jobs/meesho-sde1,SDE 1 - Backend,Bengaluru,₹18-24 LPA,2026-07-18,lever,,,,meesho-sde1,backend,,,,,,,Apply,2026-07-09,dream co [fit:86],1,good
-2026-07-03,Groww,803,sourced,https://demo.local/jobs/groww-mle,Machine Learning Engineer (Associate),Bengaluru,₹16-22 LPA,,greenhouse,,,,groww-mle,ai_platform,,,,,,,Apply,,ML + Python [fit:82],1,good
-2026-07-03,RemotiveStartup,512,sourced,https://demo.local/jobs/rmtv-be,Junior Backend Developer,Remote (Worldwide),$45k-60k/yr,2026-07-25,remotive,,,,rmtv-be,backend,,,,,,,Apply,,remote friendly [fit:70],1,good
-2026-06-28,Linear,305,sourced,https://demo.local/jobs/linear-swe,Software Engineer I,Remote (India eligible),,,ashby,,,,linear-swe,master,,,,,,,Apply,,product eng [fit:76],,unknown
-2026-06-25,PhonePe,1301,applied,https://demo.local/jobs/ppe-be,Backend Engineer,Hyderabad,₹20-30 LPA,,greenhouse,2026-06-27,,,ppe-be,backend,,,,,,,Follow up,2026-07-05,applied via referral,2,warn
-2026-06-20,InMobi,758,oa,https://demo.local/jobs/inmobi-sde,SDE - Platform,Bengaluru,₹15-22 LPA,,greenhouse,2026-06-22,,,inmobi-sde,backend,,2026-06-30,,,,,Prep OA,2026-07-02,HackerRank OA sent,1,good
-2026-06-15,Chargebee,742,tech,https://demo.local/jobs/cb-be,Backend Engineer,Chennai,₹14-20 LPA,,workable,2026-06-17,,,cb-be,backend,,,,2026-07-01,,,Tech prep,2026-07-03,system design round,1,good
-2026-06-10,Postman,1288,offer,https://demo.local/jobs/pm-sde1,SDE 1,Bengaluru,₹22-28 LPA,,greenhouse,2026-06-12,,,pm-sde1,backend,,,,,,₹24 LPA + ESOPs,Decide,2026-07-06,verbal offer received,1,good
-2026-06-30,BodyShopStaffing,120,not_applicable,https://demo.local/jobs/staffing-x,Software Engineer (C2H),Remote,,,linkedin_guest,,,,staff-x,master,,,,,,,,,contract body shop,3,bad
+2026-07-02,Vercel,1063,sourced,https://vercel.com/careers,Backend Engineer (New Grad),Remote (India eligible),$90k-120k/yr,2026-07-20,jsearch,,,,vercel-be,backend,,,,,,,Apply,2026-07-08,Go + Postgres + edge [fit:88],1,good
+2026-07-01,Razorpay,1058,sourced,https://razorpay.com/careers/,SDE 1 - Payments,Bengaluru,₹18-26 LPA,2026-07-15,greenhouse,,,,rzp-sde1,backend,,,,,,,Apply,2026-07-07,dream co fintech backend [fit:90],1,good
+2026-07-02,Meesho,998,sourced,https://www.linkedin.com/jobs/search/?keywords=SDE%20Meesho,SDE 1 - Backend,Bengaluru,₹18-24 LPA,2026-07-18,lever,,,,meesho-sde1,backend,,,,,,,Apply,2026-07-09,dream co [fit:86],1,good
+2026-07-03,Groww,803,sourced,https://groww.in/careers,Machine Learning Engineer (Associate),Bengaluru,₹16-22 LPA,,greenhouse,,,,groww-mle,ai_platform,,,,,,,Apply,,ML + Python [fit:82],1,good
+2026-07-03,GitLab,512,sourced,https://about.gitlab.com/jobs/,Junior Backend Developer,Remote (Worldwide),$45k-60k/yr,2026-07-25,remotive,,,,gitlab-be,backend,,,,,,,Apply,,remote friendly [fit:70],1,good
+2026-06-28,Linear,305,sourced,https://linear.app/careers,Software Engineer I,Remote (India eligible),,,ashby,,,,linear-swe,master,,,,,,,Apply,,product eng [fit:76],,unknown
+2026-06-25,PhonePe,1301,applied,https://www.phonepe.com/careers/,Backend Engineer,Hyderabad,₹20-30 LPA,,greenhouse,2026-06-27,,,ppe-be,backend,,,,,,,Follow up,2026-07-05,applied via referral,2,warn
+2026-06-20,InMobi,758,oa,https://www.inmobi.com/company/careers,SDE - Platform,Bengaluru,₹15-22 LPA,,greenhouse,2026-06-22,,,inmobi-sde,backend,,2026-06-30,,,,,Prep OA,2026-07-02,HackerRank OA sent,1,good
+2026-06-15,Chargebee,742,tech,https://www.chargebee.com/careers/,Backend Engineer,Chennai,₹14-20 LPA,,workable,2026-06-17,,,cb-be,backend,,,,2026-07-01,,,Tech prep,2026-07-03,system design round,1,good
+2026-06-10,Postman,1288,offer,https://www.postman.com/company/careers/,SDE 1,Bengaluru,₹22-28 LPA,,greenhouse,2026-06-12,,,pm-sde1,backend,,,,,,₹24 LPA + ESOPs,Decide,2026-07-06,verbal offer received,1,good
+2026-06-30,TEKsystems,120,not_applicable,https://www.teksystems.com/en/careers,Software Engineer (C2H),Remote,,,linkedin_guest,,,,teksys-x,master,,,,,,,,,contract / C2H staffing,3,bad

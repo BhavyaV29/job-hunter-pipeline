@@ -44,6 +44,16 @@ def test_live_empty_state(live):
         assert c.get("/healthz").json()["demo"] is False
 
 
+def test_live_hides_recruiter_banner(live):
+    # The "Live demo / sample data" banner is for the public showcase only;
+    # a real user's live instance must never see it.
+    with TestClient(server.app) as c:
+        r = c.get("/")
+        assert r.status_code == 200
+        assert "github.com/BhavyaV29/job-hunter-pipeline" not in r.text
+        assert "Live demo" not in r.text
+
+
 def test_escaping_and_deadline_cues(live):
     today = date.today()
     _write(live / "tracker.csv", [

@@ -34,6 +34,19 @@
     </div>
   </header>
 
+  {% if cfg.demo %}
+  <div class="border-b border-neutral-800 bg-neutral-900/40">
+    <div class="max-w-7xl mx-auto px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm">
+      <span class="text-neutral-300 font-medium">Live demo</span>
+      <span class="text-neutral-500">— sources fresh engineering roles, scores &amp; de&#8209;dupes them, tracks each stage and drafts outreach, synced to a personal tracker. The rows below are sample data.</span>
+      <span class="ml-auto flex items-center gap-4 text-neutral-400">
+        <a class="underline hover:text-neutral-100" href="https://github.com/BhavyaV29/job-hunter-pipeline" target="_blank" rel="noopener">View code on GitHub &#8599;</a>
+        <a class="underline hover:text-neutral-100" href="https://github.com/BhavyaV29/job-hunter-pipeline/blob/main/DEPLOY.md" target="_blank" rel="noopener">Deploy your own &#8599;</a>
+      </span>
+    </div>
+  </div>
+  {% endif %}
+
   <main class="max-w-7xl mx-auto px-4 py-6 space-y-5">
 
     <div id="stats" hx-get="/stats" hx-trigger="refreshStats from:body" hx-swap="innerHTML">

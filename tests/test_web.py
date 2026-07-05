@@ -32,6 +32,21 @@ def test_roles_partial_has_sample():
     assert "Razorpay" in r.text or "Vercel" in r.text
 
 
+def test_demo_sample_urls_are_real_and_clickable():
+    r = client.get("/roles?view=all")
+    assert r.status_code == 200
+    assert "demo.local" not in r.text            # no placeholder links
+    assert "https://vercel.com/careers" in r.text  # a real, clickable posting
+    assert ">open" in r.text                      # rendered as a link, not the "demo" fallback
+
+
+def test_demo_recruiter_banner():
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "github.com/BhavyaV29/job-hunter-pipeline" in r.text
+    assert "Live demo" in r.text and "Deploy your own" in r.text
+
+
 def test_api_roles_json():
     r = client.get("/api/roles?view=all")
     assert r.status_code == 200
@@ -41,7 +56,7 @@ def test_api_roles_json():
 
 def test_demo_write_blocked():
     r = client.post("/roles/stage",
-                    data={"url": "https://demo.local/jobs/vercel-be", "stage": "applied"})
+                    data={"url": "https://vercel.com/careers", "stage": "applied"})
     assert r.status_code == 403
 
 
