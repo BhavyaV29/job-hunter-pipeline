@@ -6,7 +6,9 @@
 {% set exp_style = {'good':'text-emerald-400','warn':'text-amber-400','bad':'text-rose-400','unknown':'text-neutral-500'} %}
 {% for r in roles %}
 <tr class="hover:bg-neutral-900/40">
-  <td class="px-3 py-2 tabular-nums text-neutral-300">{{ r._score }}</td>
+  <td class="px-3 py-2 tabular-nums text-neutral-300 whitespace-nowrap">
+    {{ r._score }}{% if r._new %}<span class="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 align-middle" title="found today"></span>{% endif %}
+  </td>
   <td class="px-3 py-2">
     <span class="text-xs px-1.5 py-0.5 rounded border {{ tier_style.get(r._tier, tier_style[0]) }}">
       {{ 'T' ~ r._tier if r._tier else '—' }}
@@ -20,8 +22,12 @@
     {% endif %}
   </td>
   <td class="px-3 py-2 text-neutral-400">{{ r.location or '—' }}</td>
-  <td class="px-3 py-2 text-neutral-400">{{ r.salary or '—' }}</td>
-  <td class="px-3 py-2 text-neutral-400 tabular-nums">{{ r.deadline or '—' }}</td>
+  <td class="px-3 py-2 text-neutral-400 whitespace-nowrap">{{ r.salary or '—' }}</td>
+  {% set dd = r._deadline_days %}
+  <td class="px-3 py-2 tabular-nums whitespace-nowrap {{ 'text-rose-400 line-through' if (dd is not none and dd < 0) else ('text-amber-400' if (dd is not none and dd <= 7) else 'text-neutral-400') }}"
+      {% if dd is not none %}title="{{ dd }} day(s) left"{% endif %}>
+    {{ r.deadline or '—' }}{% if dd is not none and 0 <= dd <= 7 %} <span class="text-[10px]">({{ dd }}d)</span>{% endif %}
+  </td>
   <td class="px-3 py-2">
     <form class="inline">
       <input type="hidden" name="url" value="{{ r.url }}" />
@@ -29,10 +35,11 @@
       <input type="hidden" name="sort" value="{{ params.sort }}" />
       <input type="hidden" name="q" value="{{ params.q }}" />
       <input type="hidden" name="stage_filter" value="{{ params.stage }}" />
-      <select name="stage" hx-post="/roles/stage" hx-include="closest form"
+      <select name="stage" aria-label="Change stage for {{ r.company }}"
+              hx-post="/roles/stage" hx-include="closest form"
               hx-target="#rows" hx-swap="innerHTML" hx-trigger="change"
               {{ 'disabled' if (cfg.demo or not admin_ok) }}
-              class="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-100 disabled:text-neutral-500 disabled:cursor-not-allowed">
+              class="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-neutral-500 disabled:text-neutral-500 disabled:cursor-not-allowed">
         {% for s in ['sourced','new','applied','oa','phone','tech','onsite','offer','rejected','withdrawn','not_applicable'] %}
           <option value="{{ s }}" {{ 'selected' if (r.stage or '')|lower == s }}>{{ s }}</option>
         {% endfor %}
@@ -49,5 +56,20 @@
   </td>
 </tr>
 {% else %}
-<tr><td colspan="9" class="px-3 py-8 text-center text-neutral-500">No roles match. Try “all roles”, clear the search, or run a refresh.</td></tr>
+<tr>
+  <td colspan="9" class="px-3 py-10 text-center">
+    {% if params.q or params.stage %}
+      <div class="text-neutral-400">No roles match these filters.</div>
+      <div class="text-xs text-neutral-600 mt-1">Try the “all roles” view or clear the search.</div>
+    {% elif cfg.demo %}
+      <div class="text-neutral-400">No roles to show.</div>
+    {% else %}
+      <div class="text-neutral-300">No roles yet.</div>
+      <div class="text-xs text-neutral-500 mt-1">
+        Add your API keys in <a class="underline hover:text-neutral-200" href="/settings">Settings</a>,
+        then hit <b>Run refresh</b> to pull in jobs.
+      </div>
+    {% endif %}
+  </td>
+</tr>
 {% endfor %}

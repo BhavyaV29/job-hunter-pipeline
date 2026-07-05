@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import os
 import threading
+from datetime import date, datetime
 from pathlib import Path
 
 import score as _score
@@ -65,6 +66,16 @@ def _to_int(v, default: int = 0) -> int:
         return default
 
 
+def _days_until(value) -> int | None:
+    s = (value or "").strip()[:10]
+    if not s:
+        return None
+    try:
+        return (datetime.strptime(s, "%Y-%m-%d").date() - date.today()).days
+    except ValueError:
+        return None
+
+
 def read_rows(path: Path | None = None) -> tuple[list[str], list[dict]]:
     p = path or active_path()
     if not p.exists():
@@ -83,6 +94,7 @@ def _thresholds():
 def _decorate(rows: list[dict]) -> list[dict]:
     """Attach _score / _tier using score.py so the UI matches the CLI ranking."""
     min_inr, remote_floor_inr, warn_days, dreams = _thresholds()
+    today = date.today().isoformat()
     out = []
     for r in rows:
         r = dict(r)
@@ -91,6 +103,8 @@ def _decorate(rows: list[dict]) -> list[dict]:
             r, min_inr, remote_floor_inr, warn_days, dreams)
         r["_tier"] = _score.tier_of(r.get("role", ""), r.get("location", ""),
                                     r.get("salary", ""), min_inr, remote_floor_inr)
+        r["_new"] = (r.get("date_found") or "").strip()[:10] == today
+        r["_deadline_days"] = _days_until(r.get("deadline"))
         out.append(r)
     return out
 
