@@ -1,14 +1,13 @@
-"""Parse years-of-experience requirements from job title + description.
+"""Parse the required years-of-experience from a title + description.
 
-User profile: ~6 months experience / final-year student.
-  good    — required <= 1 year (or fresher/entry-level signals)
-  warn    — required ~2 years (stretch but apply selectively)
-  bad     — required >= 3 years (senior band)
-  unknown — no parseable requirement
+good/warn/bad thresholds come from sources.yaml `profile:` (experience_bands),
+defaulting to the fresher bands (<=1 good, <=2 warn) when unset.
 """
 from __future__ import annotations
 
 import re
+
+from profile_config import experience_bands
 
 # Fresher / entry-level signals — treat as 0 years required.
 _FRESHER_RE = re.compile(
@@ -45,9 +44,10 @@ _YEARS_PATTERNS = [
 def _classify_match(years: float | None) -> str:
     if years is None:
         return "unknown"
-    if years <= 1.0:
+    good_max, warn_max = experience_bands()
+    if years <= good_max:
         return "good"
-    if years <= 2.0:
+    if years <= warn_max:
         return "warn"
     return "bad"
 

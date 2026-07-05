@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>job-hunter · settings</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    select { -webkit-appearance:none; appearance:none; }
+  </style>
+</head>
+{% set writable = (not demo) and admin_ok %}
+<body class="bg-neutral-950 text-neutral-100 min-h-screen">
+  <header class="border-b border-neutral-800 sticky top-0 bg-neutral-950/90 backdrop-blur z-10">
+    <div class="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+      <a href="/" class="text-lg font-semibold tracking-tight">job&#8209;hunter<span class="text-neutral-500">/pipeline</span></a>
+      <span class="text-neutral-600">/</span><span class="text-sm text-neutral-300">settings</span>
+      <div class="ml-auto flex items-center gap-4 text-sm text-neutral-400">
+        <a class="hover:text-neutral-100" href="/">&larr; dashboard</a>
+        <a class="hover:text-neutral-100" href="/setup">setup</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-8 space-y-8">
+    <section>
+      <h1 class="text-xl font-semibold">Configure your instance</h1>
+      <p class="text-neutral-400 mt-1 text-sm">
+        Enter your keys, connect a Google Sheet and set your profile — all saved on <b>this</b> instance,
+        no file editing. Secrets are stored server-side and never shown back; leave a key blank to keep it.
+      </p>
+    </section>
+
+    {% if saved %}
+    <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-sm px-4 py-3">
+      Saved {{ saved }}. Changes apply on your next <b>Run refresh</b>.
+    </div>
+    {% endif %}
+    {% if demo %}
+    <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300 text-sm px-4 py-3">
+      This is the read-only demo. Deploy your own instance (see <a class="underline" href="/setup">setup</a>) to save settings.
+    </div>
+    {% elif not admin_ok %}
+    <div class="rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-300 text-sm px-4 py-3">
+      View-only — open this page with <code>?token=YOUR_ADMIN_TOKEN</code> (printed in the server logs on startup) to edit.
+    </div>
+    {% endif %}
+
+    <!-- API keys -->
+    <section class="rounded-lg border border-neutral-800">
+      <div class="px-4 py-3 border-b border-neutral-800">
+        <h2 class="font-semibold">API keys</h2>
+        <p class="text-xs text-neutral-500 mt-0.5">All optional — each source skips gracefully if its key is missing. <code>RAPIDAPI_KEY</code> (JSearch) gives the most coverage.</p>
+      </div>
+      <form method="post" action="/settings/keys" class="p-4 space-y-4">
+        {% macro secret(name, label, hint='') %}
+        <label class="block">
+          <div class="flex items-center gap-2 text-sm">
+            <span class="text-neutral-300">{{ label }}</span>
+            <span class="text-xs {{ 'text-emerald-400' if cfg.present.get(name) else 'text-neutral-600' }}">{{ '● set' if cfg.present.get(name) else '○ not set' }}</span>
+          </div>
+          <input type="password" name="{{ name }}" autocomplete="off" placeholder="{{ 'leave blank to keep current' if cfg.present.get(name) else 'paste key' }}"
+                 {{ '' if writable else 'disabled' }}
+                 class="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-neutral-100 disabled:opacity-50" />
+          {% if hint %}<span class="text-xs text-neutral-500">{{ hint }}</span>{% endif %}
+        </label>
+        {% endmacro %}
+
+        {{ secret('RAPIDAPI_KEY', 'RapidAPI key', 'JSearch on RapidAPI — the broadest single source.') }}
+        <div class="grid grid-cols-2 gap-4">
+          {{ secret('ADZUNA_APP_ID', 'Adzuna app id') }}
+          {{ secret('ADZUNA_APP_KEY', 'Adzuna app key') }}
+        </div>
+        {{ secret('SERPAPI_KEY', 'SerpAPI key', 'Google Jobs via SerpAPI.') }}
+        {{ secret('HUNTER_API_KEY', 'Hunter.io key', 'Finds recruiter emails for outreach.') }}
+
+        <div class="border-t border-neutral-800 pt-4 space-y-4">
+          <label class="block">
+            <span class="text-sm text-neutral-300">LLM provider</span>
+            <select name="LLM_PROVIDER" {{ '' if writable else 'disabled' }}
+                    class="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-neutral-100 disabled:opacity-50">
+              {% set lp = cfg.llm_provider %}
+              <option value="" {{ 'selected' if not lp }}>none (heuristic scoring only)</option>
+              {% for p in ['gemini','openai','anthropic'] %}
+              <option value="{{ p }}" {{ 'selected' if lp==p }}>{{ p }}</option>
+              {% endfor %}
+            </select>
+            <span class="text-xs text-neutral-500">Optional — sharpens fit scoring &amp; outreach drafts.</span>
+          </label>
+          <div class="grid grid-cols-3 gap-4">
+            {{ secret('GEMINI_API_KEY', 'Gemini') }}
+            {{ secret('OPENAI_API_KEY', 'OpenAI') }}
+            {{ secret('ANTHROPIC_API_KEY', 'Anthropic') }}
+          </div>
+        </div>
+
+        <div class="flex justify-end">
+          <button {{ '' if writable else 'disabled' }}
+                  class="px-4 py-2 rounded bg-neutral-100 text-neutral-900 text-sm font-medium hover:bg-white transition disabled:opacity-40 disabled:cursor-not-allowed">Save keys</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Google Sheet -->
+    <section class="rounded-lg border border-neutral-800">
+      <div class="px-4 py-3 border-b border-neutral-800">
+        <h2 class="font-semibold">Google Sheet <span class="text-xs text-neutral-500 font-normal">(optional)</span></h2>
+        <p class="text-xs text-neutral-500 mt-0.5">Mirror your tracker to a Sheet you own. Leave empty to use <code>tracker.csv</code> only.</p>
+      </div>
+      <form method="post" action="/settings/sheet" class="p-4 space-y-4">
+        <label class="block">
+          <span class="text-sm text-neutral-300">Spreadsheet ID</span>
+          <input name="GOOGLE_SHEETS_ID" value="{{ cfg.sheets_id }}" placeholder="from the sheet URL: /d/&lt;THIS&gt;/edit"
+                 {{ '' if writable else 'disabled' }}
+                 class="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-neutral-100 disabled:opacity-50" />
+        </label>
+        <label class="block">
+          <div class="flex items-center gap-2 text-sm">
+            <span class="text-neutral-300">Service account JSON</span>
+            <span class="text-xs {{ 'text-emerald-400' if cfg.present.get('GOOGLE_SERVICE_ACCOUNT_JSON') else 'text-neutral-600' }}">{{ '● set' if cfg.present.get('GOOGLE_SERVICE_ACCOUNT_JSON') else '○ not set' }}</span>
+          </div>
+          <textarea name="GOOGLE_SERVICE_ACCOUNT_JSON" rows="4" placeholder='paste the whole {"type":"service_account", ...} JSON, or a file path'
+                    {{ '' if writable else 'disabled' }}
+                    class="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-xs font-mono text-neutral-100 disabled:opacity-50"></textarea>
+          <span class="text-xs text-neutral-500">Share the sheet with that service account's email as an editor.</span>
+        </label>
+        <div class="flex justify-end">
+          <button {{ '' if writable else 'disabled' }}
+                  class="px-4 py-2 rounded bg-neutral-100 text-neutral-900 text-sm font-medium hover:bg-white transition disabled:opacity-40 disabled:cursor-not-allowed">Save Sheet</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Profile -->
+    <section class="rounded-lg border border-neutral-800">
+      <div class="px-4 py-3 border-b border-neutral-800">
+        <h2 class="font-semibold">Your profile</h2>
+        <p class="text-xs text-neutral-500 mt-0.5">Tunes ranking, the experience match and which roles are dropped. Pick a seniority preset; the numbers below are optional fine-tuning (blank = use the preset).</p>
+      </div>
+      <form method="post" action="/settings/profile" class="p-4 space-y-4">
+        {% set sr = profile.get('seniority') or cfg.seniority %}
+        <label class="block">
+          <span class="text-sm text-neutral-300">Seniority</span>
+          <select name="seniority" {{ '' if writable else 'disabled' }}
+                  class="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-neutral-100 disabled:opacity-50">
+            {% for s in ['fresher','junior','mid','senior'] %}
+            <option value="{{ s }}" {{ 'selected' if sr==s }}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="grid grid-cols-3 gap-4">
+          <label class="block">
+            <span class="text-sm text-neutral-300">Ideal exp (yrs) ≤</span>
+            <input name="exp_good_max" type="number" step="0.5" value="{{ profile.get('exp_good_max','') }}"
+                   {{ '' if writable else 'disabled' }}
+                   class="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-neutral-100 disabled:opacity-50" />
+          </label>
+          <label class="block">
+            <span class="text-sm text-neutral-300">Stretch exp (yrs) ≤</span>
+            <input name="exp_warn_max" type="number" step="0.5" value="{{ profile.get('exp_warn_max','') }}"
+                   {{ '' if writable else 'disabled' }}
+                   class="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-neutral-100 disabled:opacity-50" />
+          </label>
+          <label class="block">
+            <span class="text-sm text-neutral-300">Hard cap (yrs)</span>
+            <input name="max_exp_years" type="number" step="0.5" value="{{ profile.get('max_exp_years','') }}"
+                   {{ '' if writable else 'disabled' }}
+                   class="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-neutral-100 disabled:opacity-50" />
+          </label>
+        </div>
+        <label class="block">
+          <span class="text-sm text-neutral-300">Drop senior-titled roles (Staff/Lead/Principal…)</span>
+          {% set dst = profile.get('drop_senior_titles') %}
+          <select name="drop_senior_titles" {{ '' if writable else 'disabled' }}
+                  class="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm text-neutral-100 disabled:opacity-50">
+            <option value="" {{ 'selected' if dst is none }}>inherit from preset</option>
+            <option value="yes" {{ 'selected' if dst == true }}>yes — drop them</option>
+            <option value="no" {{ 'selected' if dst == false }}>no — keep them</option>
+          </select>
+        </label>
+        <div class="flex justify-end">
+          <button {{ '' if writable else 'disabled' }}
+                  class="px-4 py-2 rounded bg-neutral-100 text-neutral-900 text-sm font-medium hover:bg-white transition disabled:opacity-40 disabled:cursor-not-allowed">Save profile</button>
+        </div>
+      </form>
+    </section>
+
+    <p class="text-xs text-neutral-600">
+      Advanced tuning — target companies, source list and hard filters — still lives in
+      <code class="text-neutral-400">sources.yaml</code>. Everything above is stored on your instance's data volume and survives restarts.
+    </p>
+  </main>
+</body>
+</html>

@@ -1,13 +1,87 @@
 # job-hunter-pipeline — automated job sourcing & outreach
 
-Pulls fresh, relevant **entry-level / new-grad / fresher** SDE / Backend / ML /
-Applied-AI roles (India + remote) into `tracker.csv` so you start each day with a
-triaged list instead of doom-scrolling job boards.
+Pulls fresh, relevant **technical** roles (SDE / Backend / ML / Applied-AI,
+India + remote by default) into `tracker.csv` so you start each day with a
+triaged list instead of doom-scrolling job boards. It ships tuned for an
+**entry-level / new-grad** search, but every person-specific knob — seniority,
+experience bands, stack keywords, geography, score weights — is a parameter you
+set in `sources.yaml` (see **[Tune it to you](#tune-it-to-you-profile)**), with
+no code changes.
 
 It reaches the big consumer platforms — **LinkedIn, Indeed, Glassdoor, Naukri,
 RemoteOK, Wellfound** — using the **most robust, sustainable, and safe method for
 each**: official/aggregator APIs where possible, public *guest* endpoints where
 not, and **never** your personal login.
+
+## Tune it to you (`profile:`)
+
+This is a *technical* job hunter, but it is **not hardcoded to one person.** The
+knobs that change search-to-search live in a `profile:` block in `sources.yaml`;
+omit the block and you get the fresher / new-grad defaults (behaviour unchanged).
+
+```yaml
+profile:
+  seniority: fresher     # fresher | junior | mid | senior
+  # explicit overrides (win over the preset):
+  # exp_good_max: 1      # required YOE <= this -> "good"
+  # exp_warn_max: 2      # required YOE <= this -> "warn" (else "bad")
+  # drop_senior_titles: true
+  # max_exp_years: 2     # drop roles requiring more than this at fetch (null = keep all)
+  # boost_keywords:   { backend: 5, python: 3, kubernetes: 4 }   # your stack
+  # negative_keywords:{ senior: -6, staff: -7 }                  # titles to avoid
+  # location_boosts:  { bengaluru: 10, remote: 2 }               # your geography
+  # exp_match_adjust: { good: 5, warn: -10, bad: -30, unknown: 0 }
+  # remote_boost: 8
+  # brand_a_boost: 30
+  # brand_b_boost: 15
+  # dream_boost: 50
+```
+
+| `seniority` | exp "good" ≤ | exp "warn" ≤ | senior titles | max YOE at fetch |
+|---|---|---|---|---|
+| `fresher` | 1 yr | 2 yr | dropped | 2 |
+| `junior`  | 2 yr | 4 yr | dropped | 4 |
+| `mid`     | 5 yr | 8 yr | **kept** | none |
+| `senior`  | 12 yr | 20 yr | **kept** | none |
+
+The preset drives experience-match classification (`experience.py`), the
+senior-title hard-drop (`fresher_filter.py`), and defaults for the score weights
+(`score.py`). Any explicit key overrides the preset.
+
+> **For `mid` / `senior`, also relax the fetch-time gates in `filters:`** —
+> remove `senior` / `lead` / `staff` from `title_exclude`, add your target
+> titles to `title_include`, and raise/clear `max_exp_years`. Those gate roles
+> *before* they are scored, so a senior profile left on the default fresher
+> `filters` would drop the very roles it wants. Rule of thumb: **`profile:` tunes
+> classification + ranking; `filters:` tunes the hard keep/drop at fetch.**
+
+## Run it as a web app (deploy your own — no file editing)
+
+Prefer a dashboard over the terminal? There's a self-hostable FastAPI + HTMX web
+app (`server.py`) over the *same* `tracker.csv`, and you configure the whole thing
+**in the browser** — no editing `.env` or `sources.yaml`:
+
+- a **visual Settings page** (`/settings`) — paste your API keys, connect a Google
+  Sheet, and set your profile (seniority + fine-tuning); everything is saved on
+  *your* instance and reloads on restart;
+- a **triage dashboard** — filter/sort roles, change stages inline, watch the funnel;
+- a **"Run refresh" button** + optional **daily scheduler** that call the same `morning.py`;
+- a **read-only demo** (`DEMO_MODE=1`) backed by `tracker.sample.csv` for a public showcase.
+
+```bash
+pip install -r requirements-web.txt
+uvicorn server:app --reload            # http://localhost:8000
+# or: docker compose up --build
+```
+
+A fresh instance comes up **live** and prints a one-time `?token=…` link in the
+startup logs (that's your admin token, which gates writes). Open it → **Settings**
+→ add your keys/Sheet/profile → **Run refresh**. Everyone runs their **own**
+instance with their **own** keys — no shared server holds anyone's secrets.
+One-click blueprints for **Render** and **Fly.io**, plus a `Dockerfile` /
+`docker-compose.yml`, are included — see **[DEPLOY.md](DEPLOY.md)** and the in-app
+**`/setup`** page. (Advanced tuning — target companies, source list, hard
+filters — still lives in `sources.yaml`.)
 
 ## Daily use — one command (Sheet-first)
 

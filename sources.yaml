@@ -12,6 +12,54 @@
 # skips failures and reports them so you can fix or drop them. Add YOUR real targets
 # (especially India startups + the companies on your outreach/targets.md list).
 
+# ---- Per-person tuning (profile) ------------------------------------------
+# This stays a TECHNICAL job hunter, but every knob that differs person-to-person
+# lives here, so you retune it to YOUR search without editing any Python.
+# An absent block == the fresher defaults below (behaviour is unchanged).
+# Read by profile_config.py -> experience.py (bands), fresher_filter.py
+# (senior-title drop) and score.py (keyword / boost weights).
+profile:
+  # Seniority preset -> experience bands + whether senior titles are dropped:
+  #   fresher | junior | mid | senior
+  # For mid/senior, ALSO relax the fetch-time gates in `filters` below
+  # (title_exclude, max_exp_years, title_include) or good roles get dropped
+  # before they are ever scored.
+  seniority: fresher
+
+  # --- Optional explicit overrides (win over the preset). Uncomment to tune. ---
+  # exp_good_max: 1          # required YOE <= this  -> "good"
+  # exp_warn_max: 2          # required YOE <= this  -> "warn"  (else "bad")
+  # drop_senior_titles: true # hard-drop senior/staff/principal/lead at fetch
+  # max_exp_years: 2         # drop roles requiring more than this (null = keep all)
+
+  # Stack keywords to BOOST in ranking (title match). When present this REPLACES
+  # the built-in set, so list every keyword you want counted.
+  # boost_keywords:
+  #   backend: 5
+  #   python: 3
+  #   kubernetes: 4
+  #   "machine learning": 3
+
+  # Title signals to PENALIZE (a fresher avoids these; a senior would flip them).
+  # negative_keywords:
+  #   senior: -6
+  #   staff: -7
+  #   intern: -4
+
+  # Geography boosts (city / region -> points). Retune for where you want to work.
+  # location_boosts:
+  #   bengaluru: 10
+  #   remote: 2
+
+  # Experience-match score adjustments by class.
+  # exp_match_adjust: { good: 5, warn: -10, bad: -30, unknown: 0 }
+
+  # Scalar score weights (defaults shown).
+  # remote_boost: 8
+  # brand_a_boost: 30
+  # brand_b_boost: 15
+  # dream_boost: 50
+
 # ---- Filtering: edit freely. A role is kept if its title matches an include
 #      keyword, has no exclude keyword, and (if location_include is non-empty)
 #      its location matches one of those substrings. All case-insensitive. ----

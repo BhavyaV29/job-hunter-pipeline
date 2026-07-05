@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>job-hunter · dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    ::selection { background:#e5e5e5; color:#0a0a0a; }
+    select { -webkit-appearance:none; appearance:none; }
+  </style>
+</head>
+<body class="bg-neutral-950 text-neutral-100 min-h-screen"
+      {% if request.query_params.get('token') %}hx-headers='{"X-Admin-Token": "{{ request.query_params.get("token") }}"}'{% endif %}>
+
+  <header class="border-b border-neutral-800 sticky top-0 bg-neutral-950/90 backdrop-blur z-10">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
+      <span class="text-lg font-semibold tracking-tight">job&#8209;hunter<span class="text-neutral-500">/pipeline</span></span>
+      {% if cfg.demo %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">DEMO · read&#8209;only sample data</span>
+      {% elif cfg.admin_protected and not admin_ok %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">view&#8209;only · add ?token=</span>
+      {% endif %}
+      <div class="ml-auto flex items-center gap-4 text-sm text-neutral-400">
+        <span title="target seniority profile">profile: <span class="text-neutral-200">{{ cfg.seniority }}</span></span>
+        <a class="hover:text-neutral-100" href="/settings">settings</a>
+        <a class="hover:text-neutral-100" href="/setup">setup</a>
+        <a class="hover:text-neutral-100" href="/api/docs">api</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6 space-y-5">
+
+    <div id="stats" hx-get="/stats" hx-trigger="refreshStats from:body" hx-swap="innerHTML">
+      {% include 'partials/stats.html' %}
+    </div>
+
+    <div class="flex flex-wrap items-end gap-3">
+      <form id="filters" class="flex flex-wrap items-end gap-3"
+            hx-get="/roles" hx-target="#rows" hx-swap="innerHTML"
+            hx-trigger="change, keyup delay:350ms from:#q, load">
+        <label class="text-xs text-neutral-400 flex flex-col gap-1">view
+          <select name="view" class="bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-sm text-neutral-100">
+            <option value="triage" {{ 'selected' if params.view=='triage' }}>triage queue</option>
+            <option value="all" {{ 'selected' if params.view=='all' }}>all roles</option>
+          </select>
+        </label>
+        <label class="text-xs text-neutral-400 flex flex-col gap-1">stage
+          <select name="stage" class="bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-sm text-neutral-100">
+            <option value="" {{ 'selected' if not params.stage }}>any</option>
+            {% for s in ['sourced','applied','oa','phone','tech','onsite','offer','rejected','withdrawn','not_applicable'] %}
+              <option value="{{ s }}" {{ 'selected' if params.stage==s }}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="text-xs text-neutral-400 flex flex-col gap-1">sort
+          <select name="sort" class="bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-sm text-neutral-100">
+            <option value="score" {{ 'selected' if params.sort=='score' }}>score</option>
+            <option value="deadline" {{ 'selected' if params.sort=='deadline' }}>deadline</option>
+            <option value="date" {{ 'selected' if params.sort=='date' }}>newest</option>
+            <option value="company" {{ 'selected' if params.sort=='company' }}>company</option>
+          </select>
+        </label>
+        <label class="text-xs text-neutral-400 flex flex-col gap-1 grow max-w-xs">search
+          <input id="q" name="q" value="{{ params.q }}" placeholder="company, role, location"
+                 class="bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-sm text-neutral-100" />
+        </label>
+      </form>
+
+      <div class="ml-auto flex items-center gap-3">
+        <span id="run-status"></span>
+        {% if not cfg.demo and admin_ok %}
+        <form hx-post="/run" hx-target="#run-status" hx-swap="innerHTML">
+          <button class="px-3 py-2 rounded bg-neutral-100 text-neutral-900 text-sm font-medium hover:bg-white transition">
+            &#9889; Run refresh
+          </button>
+        </form>
+        {% else %}
+        <button disabled title="{{ 'Read-only demo' if cfg.demo else 'Add ?token= to run' }}"
+                class="px-3 py-2 rounded bg-neutral-800 text-neutral-500 text-sm font-medium cursor-not-allowed">
+          &#9889; Run refresh
+        </button>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="rounded-lg border border-neutral-800 overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-neutral-900 text-neutral-400 text-xs uppercase tracking-wide">
+          <tr>
+            <th class="text-left font-medium px-3 py-2 w-16">score</th>
+            <th class="text-left font-medium px-3 py-2 w-12">tier</th>
+            <th class="text-left font-medium px-3 py-2">company</th>
+            <th class="text-left font-medium px-3 py-2">role</th>
+            <th class="text-left font-medium px-3 py-2">location</th>
+            <th class="text-left font-medium px-3 py-2">salary</th>
+            <th class="text-left font-medium px-3 py-2">deadline</th>
+            <th class="text-left font-medium px-3 py-2 w-40">stage</th>
+            <th class="text-left font-medium px-3 py-2 w-16"></th>
+          </tr>
+        </thead>
+        <tbody id="rows" class="divide-y divide-neutral-900">
+          <tr><td colspan="9" class="px-3 py-8 text-center text-neutral-500">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="text-xs text-neutral-600">
+      Same <code class="text-neutral-400">tracker.csv</code> the CLI writes. This is <b>your</b> instance —
+      add your API keys, connect a Google Sheet and set your profile in
+      <a class="underline" href="/settings">settings</a> (no file editing). New here? See <a class="underline" href="/setup">setup</a>.
+    </p>
+  </main>
+</body>
+</html>

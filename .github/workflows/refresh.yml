@@ -1,0 +1,63 @@
+name: daily-refresh
+
+# Wakes your deployed instance and triggers one pipeline run per day. Use this
+# instead of the in-app ENABLE_SCHEDULER when your host sleeps while idle (e.g.
+# Render free tier), where an in-process timer can't fire. The incoming request
+# both wakes the instance AND kicks the run.
+#
+# Setup — in your fork → Settings:
+#   Variables → APP_URL             = https://your-app.onrender.com  (no trailing slash)
+#   Variables → ENABLE_DAILY_REFRESH = true   (anything else / unset = scheduled runs stay OFF)
+#   Secrets   → ADMIN_TOKEN         = your instance's admin token
+#
+# Turn it OFF: set ENABLE_DAILY_REFRESH to false (or delete the variable), or
+# hit "Disable workflow" in the Actions tab. Either way the dashboard's manual
+# "Run refresh" button keeps working exactly the same — this is only automation
+# of that same button. (If you use this, keep the app's ENABLE_SCHEDULER off so
+# you don't run twice.)
+
+on:
+  schedule:
+    - cron: "30 2 * * *"   # 02:30 UTC daily (= 08:00 IST). cron is UTC — change to your time.
+  workflow_dispatch:       # adds a "Run workflow" button for on-demand runs
+    inputs:
+      no_outreach:
+        description: "Skip outreach drafting for this run"
+        type: boolean
+        default: false
+
+jobs:
+  refresh:
+    # Scheduled runs require the opt-in variable; a manual dispatch always runs.
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_DAILY_REFRESH == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check config
+        run: |
+          if [ -z "${{ vars.APP_URL }}" ]; then
+            echo "::error::Set the APP_URL repository variable to your deployed instance URL."
+            exit 1
+          fi
+
+      - name: Wake the instance
+        run: |
+          curl -fsS --retry 6 --retry-all-errors --retry-delay 15 --max-time 120 \
+            "${{ vars.APP_URL }}/healthz" || echo "healthz not ready yet — continuing to the run request."
+
+      - name: Trigger refresh
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          NO_OUTREACH: ${{ github.event.inputs.no_outreach || 'false' }}
+        run: |
+          code=$(curl -sS -o /tmp/resp.txt -w "%{http_code}" -X POST "$APP_URL/run" \
+            -H "X-Admin-Token: $ADMIN_TOKEN" \
+            --data-urlencode "force=true" \
+            --data-urlencode "no_outreach=$NO_OUTREACH" \
+            --retry 4 --retry-all-errors --retry-delay 20 --max-time 180)
+          echo "HTTP $code"; cat /tmp/resp.txt; echo
+          if [ "$code" != "200" ]; then
+            echo "::error::Refresh request failed (HTTP $code). Check APP_URL, ADMIN_TOKEN, and that the instance isn't in DEMO_MODE."
+            exit 1
+          fi
+          echo "Refresh triggered — the run continues on your instance."

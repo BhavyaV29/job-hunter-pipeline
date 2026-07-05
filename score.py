@@ -39,10 +39,11 @@ from geo import (
 from dedup_keys import norm_company
 from fresher_filter import fresher_title_boost
 from staffing_filter import is_staffing_listing
+from profile_config import weight_overrides, scalar
 
-# Higher weight = stronger positive signal for you (a 2026 new-grad targeting
-# fresher SDE / MLE / Backend roles).
-KEYWORDS = {
+# Positive title signals; defaults suit a fresher SDE/ML search.
+# Override wholesale via profile.boost_keywords in sources.yaml.
+KEYWORDS = weight_overrides("boost_keywords") or {
     # core strengths
     "backend": 5, "back end": 5, "distributed": 5, "platform": 4, "infrastructure": 4,
     "go": 4, "golang": 4, "python": 3, "kubernetes": 4, "k8s": 4, "redis": 3,
@@ -56,7 +57,7 @@ KEYWORDS = {
     "associate": 4, "junior": 4, "sde": 4, "sde 1": 5, "sde i": 5,
     "software engineer 1": 5, "software engineer i": 5,
 }
-NEGATIVE = {
+NEGATIVE = weight_overrides("negative_keywords") or {
     "senior": -6, "sr.": -6, "staff": -7, "principal": -8, "manager": -6,
     "director": -8, "lead": -5, "head of": -8, "vp": -6, "intern": -4,
     "architect": -5, " ii": -5, " iii": -6, " iv": -7, "sde 2": -5, "sde ii": -5,
@@ -84,14 +85,14 @@ BRAND_TIERS = {
         "linear", "ramp", "rippling",
     },
 }
-BRAND_A_BOOST = 30
-BRAND_B_BOOST = 15
-DREAM_BOOST = 50
+BRAND_A_BOOST = scalar("brand_a_boost", 30)
+BRAND_B_BOOST = scalar("brand_b_boost", 15)
+DREAM_BOOST = scalar("dream_boost", 50)
 # Staffing/bootcamp/repost listings cap below real product-company roles.
 STAFFING_SCORE_CAP = 180
 
-# India / remote get a small boost (roles a fresher in India can realistically take).
-LOCATION_BOOST = {
+# Geography boosts (override via profile.location_boosts).
+LOCATION_BOOST = weight_overrides("location_boosts") or {
     # Top tech hubs — higher pay density, more eng roles
     "bengaluru": 10, "bangalore": 10, "gurgaon": 10, "gurugram": 10,
     "hyderabad": 10, "pune": 10,
@@ -103,7 +104,7 @@ LOCATION_BOOST = {
 # Remote is strongly PREFERRED (not required): onsite roles stay in the list but
 # rank lower WITHIN their tier. Any of these signals in the location OR title adds
 # a big boost.
-REMOTE_BOOST = 8
+REMOTE_BOOST = scalar("remote_boost", 8)
 REMOTE_SIGNALS = ("remote", "worldwide", "anywhere", "work from home", "wfh",
                   "distributed")
 
@@ -121,8 +122,8 @@ TIER_SCORE = {1: 1000, 2: 750, 3: 500, 4: 250, 0: 0}
 EXPIRY_WARN_DAYS = 7
 URGENCY_BOOST = 500
 
-# Experience-match adjustments (user ~0-1 yr; see experience.py).
-EXP_MATCH_ADJUST = {"good": 5, "warn": -10, "bad": -30, "unknown": 0}
+# Experience-match adjustments (override via profile.exp_match_adjust).
+EXP_MATCH_ADJUST = weight_overrides("exp_match_adjust") or {"good": 5, "warn": -10, "bad": -30, "unknown": 0}
 
 
 def _recency(date_found: str) -> int:

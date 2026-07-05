@@ -1,9 +1,15 @@
-"""Fresher-focused filtering for ~0–1 yr / 6-month experience profile."""
+"""Seniority/experience filtering, tuned per person via the sources.yaml profile.
+
+Defaults reproduce the fresher (~0–1 yr) behaviour; a mid/senior profile keeps
+senior titles and lifts the experience ceiling.
+"""
 from __future__ import annotations
 
 import re
 
 from experience import parse_experience
+from profile_config import drop_senior_titles as _profile_drop_senior
+from profile_config import max_exp_years as _profile_max_exp
 
 # Hard-drop title patterns — senior / clearly out of range before ATS noise.
 _SENIOR_TITLE_RE = re.compile(
@@ -35,10 +41,16 @@ def passes_fresher_filter(
     description: str = "",
     *,
     drop_exp_bad: bool = True,
-    max_exp_years: float = 2.0,
-    drop_senior_titles: bool = True,
+    max_exp_years: float | None = None,
+    drop_senior_titles: bool | None = None,
 ) -> tuple[bool, str]:
-    """Return (keep, reason). reason empty when keep=True."""
+    """Return (keep, reason). max_exp_years / drop_senior_titles fall back to the
+    profile when None; max_exp_years=None means no ceiling."""
+    if drop_senior_titles is None:
+        drop_senior_titles = _profile_drop_senior()
+    if max_exp_years is None:
+        max_exp_years = _profile_max_exp(fallback=2.0)
+
     t = (title or "").strip()
     if drop_senior_titles and _SENIOR_TITLE_RE.search(t):
         return False, "senior_title"
@@ -50,7 +62,7 @@ def passes_fresher_filter(
     exp_years, exp_match = parse_experience(t, description)
     if drop_exp_bad and exp_match == "bad":
         return False, "exp_bad"
-    if exp_years is not None and exp_years > max_exp_years:
+    if max_exp_years is not None and exp_years is not None and exp_years > max_exp_years:
         return False, f"exp_gt_{max_exp_years:g}"
 
     return True, ""

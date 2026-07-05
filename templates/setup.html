@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>job-hunter · setup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-neutral-950 text-neutral-100 min-h-screen">
+  <header class="border-b border-neutral-800">
+    <div class="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+      <a href="/" class="text-lg font-semibold tracking-tight">job&#8209;hunter<span class="text-neutral-500">/pipeline</span></a>
+      <div class="ml-auto flex items-center gap-4 text-sm text-neutral-400">
+        <a class="hover:text-neutral-100" href="/settings">settings</a>
+        <a class="hover:text-neutral-100" href="/">&larr; dashboard</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-8 space-y-8">
+    <section>
+      <h1 class="text-xl font-semibold">Run your own instance</h1>
+      <p class="text-neutral-400 mt-1 text-sm">
+        Everyone runs their own copy with their own keys and their own Google Sheet — no one else ever
+        holds your secrets. This page reflects the current environment (values are never shown).
+      </p>
+    </section>
+
+    <section class="rounded-lg border border-neutral-800 divide-y divide-neutral-900">
+      <div class="px-4 py-3 flex items-center gap-3">
+        <span class="text-sm text-neutral-400 w-52">Mode</span>
+        {% if cfg.demo %}
+          <span class="text-amber-300 text-sm">DEMO (read-only sample data)</span>
+        {% else %}
+          <span class="text-emerald-400 text-sm">Live · using {{ cfg.tracker }}</span>
+        {% endif %}
+      </div>
+      <div class="px-4 py-3 flex items-center gap-3">
+        <span class="text-sm text-neutral-400 w-52">Admin token</span>
+        <span class="text-sm {{ 'text-emerald-400' if cfg.admin_protected else 'text-neutral-500' }}">
+          {{ 'set (writes/run require ?token=, printed in startup logs)' if cfg.admin_protected else 'not set' }}
+        </span>
+      </div>
+      <div class="px-4 py-3 flex items-center gap-3">
+        <span class="text-sm text-neutral-400 w-52">Google Sheets</span>
+        <span class="text-sm {{ 'text-emerald-400' if cfg.sheets else 'text-neutral-500' }}">
+          {{ 'configured' if cfg.sheets else 'not configured (tracker.csv only)' }}
+        </span>
+      </div>
+      <div class="px-4 py-3 flex items-center gap-3">
+        <span class="text-sm text-neutral-400 w-52">Target profile</span>
+        <span class="text-sm text-neutral-200">{{ cfg.seniority }}</span>
+      </div>
+      {% for name, present in cfg.api_keys.items() %}
+      <div class="px-4 py-3 flex items-center gap-3">
+        <span class="text-sm text-neutral-400 w-52">{{ name }}</span>
+        <span class="text-sm {{ 'text-emerald-400' if present else 'text-neutral-500' }}">
+          {{ 'detected' if present else 'not set (source skips gracefully)' }}
+        </span>
+      </div>
+      {% endfor %}
+    </section>
+
+    <section class="space-y-3">
+      <h2 class="text-lg font-semibold">Turnkey setup — no file editing</h2>
+      <ol class="list-decimal list-inside space-y-2 text-sm text-neutral-300">
+        <li>Deploy the container (one-click on Render/Fly — see <code class="text-neutral-400">DEPLOY.md</code>) or run locally:
+          <pre class="mt-1 bg-neutral-900 border border-neutral-800 rounded p-3 text-xs overflow-x-auto">pip install -r requirements-web.txt
+uvicorn server:app --reload</pre>
+        </li>
+        <li>It comes up <b>live</b> and prints a one-time link with your admin token in the startup logs:
+          <pre class="mt-1 bg-neutral-900 border border-neutral-800 rounded p-3 text-xs overflow-x-auto">open http://localhost:8000/?token=…</pre>
+          (or set your own <code class="text-neutral-400">ADMIN_TOKEN</code> before starting).</li>
+        <li>Open that link, go to <a class="underline" href="/settings">settings</a>, and add your API keys, connect a Google Sheet
+          and pick your profile — all in the browser.</li>
+        <li>Hit <b>Run refresh</b> on the dashboard. Optionally set <code class="text-neutral-400">ENABLE_SCHEDULER=1</code> for a daily auto-run.</li>
+        <li>Hosting a public showcase for others? Deploy a second copy with <code class="text-neutral-400">DEMO_MODE=1</code> — it serves read-only sample data.</li>
+      </ol>
+    </section>
+  </main>
+</body>
+</html>

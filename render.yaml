@@ -1,0 +1,21 @@
+# Render blueprint — deploy your own instance in a couple of clicks.
+# New → Blueprint → point at your fork. Comes up LIVE with a generated ADMIN_TOKEN
+# (see it under the service's Environment tab). Open /?token=... → Settings to add
+# your keys/Sheet/profile in the browser. For a public read-only showcase instead,
+# set DEMO_MODE to "1".
+#
+# Note: the free plan sleeps when idle, so ENABLE_SCHEDULER isn't reliable there
+# (use a paid plan or an external cron hitting POST /run for daily refreshes).
+services:
+  - type: web
+    name: job-hunter-pipeline
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: DEMO_MODE
+        value: "0"
+      - key: NAUKRI_SKIP_PLAYWRIGHT
+        value: "1"
+      - key: ADMIN_TOKEN
+        generateValue: true

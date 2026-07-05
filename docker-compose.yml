@@ -1,0 +1,27 @@
+# Local / self-host run:
+#   1) cp .env.example .env   (add whatever API keys you have)
+#   2) docker compose up --build
+#   3) open http://localhost:8000  (add ?token=... once ADMIN_TOKEN is set)
+#
+# Defaults to a live instance (DEMO_MODE=0). Set DEMO_MODE=1 in .env to serve
+# the read-only sample demo instead.
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DEMO_MODE: "${DEMO_MODE:-0}"
+      NAUKRI_SKIP_PLAYWRIGHT: "1"
+      TRACKER_CSV: "/data/tracker.csv"
+      # Optional daily auto-refresh (needs API keys configured):
+      # ENABLE_SCHEDULER: "1"
+      # RUN_HOUR: "8"
+      # TZ: "Asia/Kolkata"
+    volumes:
+      - jobdata:/data
+
+volumes:
+  jobdata:

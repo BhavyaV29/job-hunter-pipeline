@@ -1,0 +1,53 @@
+{% set tier_style = {1:'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+                     2:'bg-sky-500/15 text-sky-300 border-sky-500/30',
+                     3:'bg-amber-500/15 text-amber-300 border-amber-500/30',
+                     4:'bg-neutral-700/30 text-neutral-300 border-neutral-600/40',
+                     0:'bg-neutral-800 text-neutral-500 border-neutral-700'} %}
+{% set exp_style = {'good':'text-emerald-400','warn':'text-amber-400','bad':'text-rose-400','unknown':'text-neutral-500'} %}
+{% for r in roles %}
+<tr class="hover:bg-neutral-900/40">
+  <td class="px-3 py-2 tabular-nums text-neutral-300">{{ r._score }}</td>
+  <td class="px-3 py-2">
+    <span class="text-xs px-1.5 py-0.5 rounded border {{ tier_style.get(r._tier, tier_style[0]) }}">
+      {{ 'T' ~ r._tier if r._tier else '—' }}
+    </span>
+  </td>
+  <td class="px-3 py-2 font-medium text-neutral-100">{{ r.company or '—' }}</td>
+  <td class="px-3 py-2 text-neutral-300">
+    {{ r.role or '—' }}
+    {% if r.exp_match and r.exp_match != 'unknown' %}
+      <span class="ml-1 text-[10px] uppercase {{ exp_style.get(r.exp_match,'text-neutral-500') }}">{{ r.exp_match }}</span>
+    {% endif %}
+  </td>
+  <td class="px-3 py-2 text-neutral-400">{{ r.location or '—' }}</td>
+  <td class="px-3 py-2 text-neutral-400">{{ r.salary or '—' }}</td>
+  <td class="px-3 py-2 text-neutral-400 tabular-nums">{{ r.deadline or '—' }}</td>
+  <td class="px-3 py-2">
+    <form class="inline">
+      <input type="hidden" name="url" value="{{ r.url }}" />
+      <input type="hidden" name="view" value="{{ params.view }}" />
+      <input type="hidden" name="sort" value="{{ params.sort }}" />
+      <input type="hidden" name="q" value="{{ params.q }}" />
+      <input type="hidden" name="stage_filter" value="{{ params.stage }}" />
+      <select name="stage" hx-post="/roles/stage" hx-include="closest form"
+              hx-target="#rows" hx-swap="innerHTML" hx-trigger="change"
+              {{ 'disabled' if (cfg.demo or not admin_ok) }}
+              class="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-100 disabled:text-neutral-500 disabled:cursor-not-allowed">
+        {% for s in ['sourced','new','applied','oa','phone','tech','onsite','offer','rejected','withdrawn','not_applicable'] %}
+          <option value="{{ s }}" {{ 'selected' if (r.stage or '')|lower == s }}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </td>
+  <td class="px-3 py-2">
+    {% if r.url and not r.url.startswith('https://demo.local') %}
+      <a href="{{ r.url }}" target="_blank" rel="noopener"
+         class="text-xs text-neutral-400 hover:text-neutral-100 underline">open</a>
+    {% else %}
+      <span class="text-xs text-neutral-700">demo</span>
+    {% endif %}
+  </td>
+</tr>
+{% else %}
+<tr><td colspan="9" class="px-3 py-8 text-center text-neutral-500">No roles match. Try “all roles”, clear the search, or run a refresh.</td></tr>
+{% endfor %}

@@ -1,0 +1,29 @@
+# Fly.io deploy config. `fly launch --no-deploy` (accept this file) then:
+#   fly volumes create jobdata --size 1
+#   fly secrets set ADMIN_TOKEN=your-strong-token   # or let it auto-generate (see logs)
+#   fly deploy
+# Comes up LIVE; open /?token=... → Settings to add keys/Sheet/profile in the
+# browser. For a public read-only showcase instead, set DEMO_MODE = "1".
+app = "job-hunter-pipeline"
+primary_region = "sin"
+
+[build]
+
+[env]
+  DEMO_MODE = "0"
+  NAUKRI_SKIP_PLAYWRIGHT = "1"
+  TRACKER_CSV = "/data/tracker.csv"
+  # ENABLE_SCHEDULER = "1"   # daily auto-refresh; keep a machine warm (min_machines_running=1)
+  # RUN_HOUR = "8"
+  # TZ = "Asia/Kolkata"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[mounts]]
+  source = "jobdata"
+  destination = "/data"

@@ -1,0 +1,17 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+node_modules/
+.DS_Store
+# never bake secrets or personal data into the image
+.env
+tracker.csv
+tracker.csv.bak
+.fetch_state.json
+.jd_cache.json
+*.patch
+docs/*-MOVED.md
