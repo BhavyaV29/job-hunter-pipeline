@@ -64,7 +64,7 @@ from pathlib import Path
 import requests
 import yaml
 
-from dedup_keys import norm_text as _norm_text, role_location_key as _norm_key
+from dedup_keys import canonical_key, norm_text as _norm_text, norm_url as _canon_url
 from experience import parse_experience
 from job_quality import SOURCE_NAMES, accept_job, is_invalid_company, normalize_job_fields
 from geo import (
@@ -76,11 +76,21 @@ from geo import (
     passes_geo_salary,
     salary_display_to_inr,
 )
-from fresher_filter import passes_fresher_filter
+from fresher_filter import passes_fresher_filter, is_senior_title
 from async_fetch import run_parallel_fetch
 from llm_jd import enrich_job, llm_enabled
 
 TIMEOUT = 20
+
+
+def _norm_key(company, role, location, *, use_location: bool = True) -> tuple:
+    """Canonical dedup identity (company, role, location).
+
+    Location-sensitive by default so genuinely distinct city postings stay their
+    own row; true duplicates still collapse via the shared canonical URL. Set
+    filters.dedup_use_location: false (sources.yaml) to merge city re-listings.
+    """
+    return canonical_key(company, role, location, use_location=use_location)
 
 # Polite, realistic browser User-Agent. The consumer-platform guest endpoints
 # (LinkedIn / Naukri) reject the generic bot UA, so we present as a real browser
@@ -1481,7 +1491,7 @@ FIELDS = [
     "salary", "deadline", "source", "applied_date", "contact_name",
     "contact_email", "job_id", "resume_variant", "referral_contact", "oa_date",
     "phone_date", "tech_date", "onsite_date", "offer_details", "next_action",
-    "next_action_date", "notes", "exp_years", "exp_match",
+    "next_action_date", "notes", "exp_years", "exp_match", "link_status",
 ]
 
 
@@ -1587,6 +1597,7 @@ def make_row(company: str, role: str, location: str, source: str, url: str,
         "notes": notes,
         "exp_years": exp_years_str,
         "exp_match": exp_match,
+        "link_status": "",
     }
 
 
@@ -1613,8 +1624,11 @@ def _process_fetched_job(
     if company_name.lower() in SOURCE_NAMES:
         company_name = ""
 
-    key = _norm_key(company_name or "TBD", title, j.get("location"))
-    if not url or url in seen or key in seen_keys:
+    use_location = bool(filters.get("dedup_use_location", True))
+    key = _norm_key(company_name or "TBD", title, j.get("location"),
+                    use_location=use_location)
+    canon = _canon_url(url)
+    if not url or canon in seen or key in seen_keys:
         return None
     if not matches(title, j.get("location", ""), filters):
         return None
@@ -1856,6 +1870,38 @@ def migrate_tracker_v5(tracker_path: Path) -> None:
     )
 
 
+def migrate_tracker_v6(tracker_path: Path) -> None:
+    """Migrate to v6 schema: add 'link_status' column at end.
+
+    Idempotent: no-op if link_status already present or file absent. Holds the
+    dead-link verdict (live / dead / expired) written by link_check.py; empty
+    until the first link check runs.
+    """
+    if not tracker_path.exists():
+        return
+    with tracker_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        existing_fields = list(reader.fieldnames or [])
+        if "link_status" in existing_fields:
+            return
+        rows = list(reader)
+
+    new_fields = list(existing_fields) + ["link_status"]
+    tmp = tracker_path.with_name(tracker_path.name + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=new_fields)
+        w.writeheader()
+        for row in rows:
+            new_row = {k: row.get(k, "") for k in new_fields}
+            new_row.setdefault("link_status", "")
+            w.writerow(new_row)
+    tmp.replace(tracker_path)
+    print(
+        f"==> migrated {tracker_path.name} to v6 schema: "
+        f"added link_status to {len(rows)} existing rows."
+    )
+
+
 # ---- Normalized role-key dedup --------------------------------------------
 # Aggregators (especially Adzuna) re-list the SAME posting under different ad-id
 # URLs and `se=` query tokens, so URL-dedup alone lets functionally-identical
@@ -1880,21 +1926,27 @@ def _dedup_keep_sort_key(row: dict) -> tuple:
     return (has_salary, has_deadline, date_found)
 
 
-def dedup_tracker_by_role(tracker_path: Path) -> int:
-    """Collapse normalized (company, role, location) duplicate rows in the tracker,
-    keeping ONE row per cluster. Counters re-listing of the SAME job under
-    different aggregator ad-id URLs that URL-dedup can't catch.
+def dedup_tracker_by_role(tracker_path: Path, *, use_location: bool = True,
+                          dry_run: bool = False) -> int:
+    """Collapse duplicate rows in the tracker, keeping ONE row per cluster.
+
+    Two rows are the SAME posting (and cluster together) when EITHER:
+      * they share a canonical (company, role, location) identity key —
+        location-sensitive by default, so genuinely distinct city postings stay
+        separate (identical company+role+location still collapses); OR
+      * they share a canonical URL (tracking params / fragments stripped) — the
+        same ad shared under different `?utm_*` / `?se=` links, INCLUDING one
+        posting spammed under many city labels behind a single URL.
+    These relations are unioned (transitively) so a chain of near-duplicates
+    collapses to one row.
 
     Keeping rules (priority order):
-      1. NEVER drop a row whose stage is anything other than sourced/new/empty —
-         applied, oa, phone, tech, onsite, offer, not_applicable, rejected,
-         withdrawn rows carry the user's manual work and are always preserved.
-         When a cluster has such a row, it is kept and the plain sourced/new dups
-         in that cluster are dropped.
-      2. Among the remaining (collapsible) candidates, prefer the row that HAS a
-         salary value.
-      3. Then prefer the row that HAS a deadline.
-      4. Then keep the earliest date_found.
+      1. NEVER drop a row whose stage is outside sourced/new/empty — applied, oa,
+         phone, tech, onsite, offer, not_applicable, rejected, withdrawn carry the
+         user's manual work and are always preserved (all of them).
+      2. Among the remaining collapsible rows, prefer the one that HAS a salary.
+      3. Then the one that HAS a deadline.
+      4. Then the earliest date_found.
 
     Idempotent (a second run is a no-op). Returns the number of rows removed.
     """
@@ -1905,16 +1957,41 @@ def dedup_tracker_by_role(tracker_path: Path) -> int:
         fieldnames = reader.fieldnames or FIELDS
         rows = list(reader)
 
-    # Group row indices by normalized key, preserving original order.
-    clusters: dict = {}
+    n = len(rows)
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    key_groups: dict = {}
+    url_groups: dict = {}
     for idx, r in enumerate(rows):
-        clusters.setdefault(
-            _norm_key(r.get("company"), r.get("role"), r.get("location")), []
+        key_groups.setdefault(
+            _norm_key(r.get("company"), r.get("role"), r.get("location"),
+                      use_location=use_location), []
         ).append(idx)
+        cu = _canon_url(r.get("url") or "")
+        if cu:
+            url_groups.setdefault(cu, []).append(idx)
+    for group in (*key_groups.values(), *url_groups.values()):
+        for other in group[1:]:
+            union(group[0], other)
+
+    components: dict = {}
+    for idx in range(n):
+        components.setdefault(find(idx), []).append(idx)
 
     drop_idx: set = set()
     clusters_collapsed = 0
-    for idxs in clusters.values():
+    for idxs in components.values():
         if len(idxs) < 2:
             continue
         protected = [i for i in idxs
@@ -1934,15 +2011,18 @@ def dedup_tracker_by_role(tracker_path: Path) -> int:
     if not drop_idx:
         return 0
 
-    kept_rows = [r for i, r in enumerate(rows) if i not in drop_idx]
-    tmp = tracker_path.with_name(tracker_path.name + ".tmp")
-    with tmp.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
-        w.writerows(kept_rows)
-    tmp.replace(tracker_path)
-    print(f"  Collapsed {len(drop_idx)} duplicate rows ({clusters_collapsed} clusters) "
-          f"by company+role+location.")
+    if not dry_run:
+        kept_rows = [r for i, r in enumerate(rows) if i not in drop_idx]
+        tmp = tracker_path.with_name(tracker_path.name + ".tmp")
+        with tmp.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+            w.writerows(kept_rows)
+        tmp.replace(tracker_path)
+    verb = "Would collapse" if dry_run else "Collapsed"
+    scope = "company+role+location" if use_location else "company+role (or shared URL)"
+    print(f"  {verb} {len(drop_idx)} duplicate rows ({clusters_collapsed} clusters) "
+          f"by {scope}.")
     return len(drop_idx)
 
 
@@ -1955,13 +2035,14 @@ def load_existing_urls(tracker_path: Path) -> set:
     if tracker_path.exists():
         with tracker_path.open(newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
-                if row.get("url"):
-                    urls.add(row["url"])
+                cu = _canon_url(row.get("url") or "")
+                if cu:  # store the CANONICAL url so tracking-param variants collide
+                    urls.add(cu)
     return urls
 
 
-def load_existing_keys(tracker_path: Path) -> set:
-    """Normalized (company, role, location) keys already in the tracker — the
+def load_existing_keys(tracker_path: Path, *, use_location: bool = True) -> set:
+    """Normalized (company, role[, location]) keys already in the tracker — the
     role-identity dedup set that complements load_existing_urls().
 
     Lets a fresh fetch skip a posting an aggregator re-listed under a NEW ad-id
@@ -1972,10 +2053,83 @@ def load_existing_keys(tracker_path: Path) -> set:
         with tracker_path.open(newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 key = _norm_key(row.get("company"), row.get("role"),
-                                row.get("location"))
+                                row.get("location"), use_location=use_location)
                 if any(key):  # ignore a fully-empty/malformed row
                     keys.add(key)
     return keys
+
+
+def _row_over_experience(row: dict, *, max_years: float, drop_senior: bool,
+                         drop_bad: bool) -> str:
+    """Return a drop-reason if the row exceeds fresher experience limits, else ''.
+
+    Looks at the title, the notes (LLM/JD fragments), and the stored exp columns,
+    so a role whose JD years landed only in exp_years is still caught.
+    """
+    title = row.get("role", "") or ""
+    if drop_senior and is_senior_title(title):
+        return "senior_title"
+    yrs, match = parse_experience(title, row.get("notes", "") or "")
+    if yrs is not None and yrs > max_years:
+        return f"exp_gt_{max_years:g}"
+    if drop_bad and match == "bad":
+        return "exp_bad"
+    col = (row.get("exp_years") or "").strip()
+    if col:
+        try:
+            if float(col) > max_years:
+                return f"exp_gt_{max_years:g}"
+        except ValueError:
+            pass
+    if drop_bad and (row.get("exp_match") or "").strip().lower() == "bad":
+        return "exp_bad"
+    return ""
+
+
+def prune_over_experience(tracker_path: Path, *, max_years: float = 2.0,
+                          drop_senior: bool = True, drop_bad: bool = True,
+                          dry_run: bool = False) -> tuple[int, Counter, list]:
+    """Drop sourced/new rows that require more than max_years experience (or carry
+    a clear seniority title). Advanced rows (applied, oa, ...) are never touched.
+
+    Idempotent. Returns (removed_count, Counter of reasons, up-to-5 examples).
+    """
+    if not tracker_path.exists():
+        return 0, Counter(), []
+    with tracker_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or FIELDS
+        rows = list(reader)
+
+    kept, reasons, examples = [], Counter(), []
+    for r in rows:
+        stage = (r.get("stage") or "").strip().lower()
+        advanced = bool((r.get("applied_date") or "").strip()) or stage not in ("sourced", "new")
+        if advanced:
+            kept.append(r)
+            continue
+        reason = _row_over_experience(
+            r, max_years=max_years, drop_senior=drop_senior, drop_bad=drop_bad,
+        )
+        if reason:
+            reasons[reason] += 1
+            if len(examples) < 5:
+                examples.append({
+                    "company": r.get("company", ""), "role": r.get("role", ""),
+                    "exp_years": r.get("exp_years", ""), "reason": reason,
+                })
+        else:
+            kept.append(r)
+
+    pruned = len(rows) - len(kept)
+    if pruned and not dry_run:
+        tmp = tracker_path.with_name(tracker_path.name + ".tmp")
+        with tmp.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+            w.writerows(kept)
+        tmp.replace(tracker_path)
+    return pruned, reasons, examples
 
 
 def prune_sourced_failures(tracker_path: Path, min_lpa_inr: float,
@@ -2207,6 +2361,46 @@ def _pull_sheet_if_configured(tracker_path: Path) -> None:
         )
 
 
+def _run_link_check(tracker_path: Path, filters: dict, *, dry_run: bool,
+                    drop_dead=None, limit=None):
+    """Run the dead-link check over the tracker using sources.yaml knobs.
+
+    Never raises: a link-check failure must not break the fetch.
+    """
+    try:
+        import link_check
+    except Exception as e:  # pragma: no cover - defensive import guard
+        print(f"  [links] link_check unavailable ({type(e).__name__}); skipped.")
+        return None
+    dd = filters.get("link_check_drop_dead", True) if drop_dead is None else drop_dead
+    lim = int(filters.get("link_check_limit", 0)) if limit is None else limit
+    try:
+        summary = link_check.check_tracker_links(
+            tracker_path,
+            drop_dead=bool(dd),
+            dry_run=dry_run,
+            limit=lim,
+            concurrency=int(filters.get("link_check_concurrency", 8)),
+            per_host_delay=float(filters.get("link_check_per_host_delay", 1.0)),
+            timeout=float(filters.get("link_check_timeout", 15)),
+            ttl_days=int(filters.get("link_check_ttl_days", 7)),
+            dead_ttl_days=int(filters.get("link_check_dead_ttl_days", 30)),
+            backup=False,
+        )
+    except Exception as e:  # pragma: no cover - network/runtime guard
+        print(f"  [links] link check failed ({type(e).__name__}: {e}); continuing.")
+        return None
+    v = summary["verdicts"]
+    verb = "would flag" if dry_run else ("removed" if dd else "flagged")
+    print(f"  [links] {summary['checked']} checked — live={v.get('live', 0)} "
+          f"dead={v.get('dead', 0)} expired={v.get('expired', 0)} "
+          f"unknown={v.get('unknown', 0)}; {verb} "
+          f"{v.get('dead', 0) + v.get('expired', 0)} dead/expired"
+          + (f" ({summary['removed']} rows removed)"
+             if dd and not dry_run else "") + ".")
+    return summary
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--sources", default="sources.yaml")
@@ -2227,12 +2421,17 @@ def main() -> int:
     base = Path(__file__).parent
     cfg = yaml.safe_load((base / args.sources).read_text())
     filters = cfg.get("filters", {})
+    # Dedup keeps every genuinely distinct posting; only TRUE duplicates (same
+    # canonical URL, or identical company+role+location) collapse. Set
+    # filters.dedup_use_location: false to also merge the same role across cities.
+    use_loc = bool(filters.get("dedup_use_location", True))
     tracker_path = base / args.tracker
     migrate_tracker(tracker_path)
     migrate_tracker_v2(tracker_path)
     migrate_tracker_v3(tracker_path)
     migrate_tracker_v4(tracker_path)
     migrate_tracker_v5(tracker_path)
+    migrate_tracker_v6(tracker_path)
 
     # --cleanup-junk: drop category pages / spam without fetching.
     if args.cleanup_junk:
@@ -2246,14 +2445,14 @@ def main() -> int:
         else:
             print("  No junk listings to remove.")
         if not args.dry_run:
-            dedup_tracker_by_role(tracker_path)
+            dedup_tracker_by_role(tracker_path, use_location=use_loc)
             subprocess.run(["uv", "run", "score.py", "--write-scores"],
                            cwd=str(tracker_path.parent), capture_output=True, text=True)
         return 0
 
     # --dedup-only: collapse role-duplicates + rescore, no fetching/Sheet sync.
     if args.dedup_only:
-        removed = dedup_tracker_by_role(tracker_path)
+        removed = dedup_tracker_by_role(tracker_path, use_location=use_loc)
         if not removed:
             print("  No normalized (company+role+location) duplicates to collapse.")
         subprocess.run(["uv", "run", "score.py", "--write-scores"],
@@ -2275,7 +2474,7 @@ def main() -> int:
     # one row per (company, role, location) BEFORE loading the dedup sets, so new
     # fetches dedupe against the cleaned tracker. Runs after the Sheet pull and
     # not_applicable prune so manually-added/dismissed rows are accounted for.
-    dedup_tracker_by_role(tracker_path)
+    dedup_tracker_by_role(tracker_path, use_location=use_loc)
 
     threshold_lpa = float(filters.get("min_salary_lpa", DEFAULT_MIN_SALARY_LPA))
     remote_floor_lpa = float(filters.get("remote_floor_lpa", DEFAULT_REMOTE_FLOOR_LPA))
@@ -2305,7 +2504,7 @@ def main() -> int:
     seen = load_existing_urls(tracker_path)
     # Parallel role-key dedup set: an incoming job is skipped if its URL is in
     # `seen` OR its normalized (company, role, location) key is in `seen_keys`.
-    seen_keys = load_existing_keys(tracker_path)
+    seen_keys = load_existing_keys(tracker_path, use_location=use_loc)
 
     geo = Counter()  # keep/drop result tallies across all sources
     drop_stats = Counter()
@@ -2457,8 +2656,29 @@ def main() -> int:
         top = ", ".join(f"{k}={v}" for k, v in drop_stats.most_common(6))
         print(f"    Fresher/LLM filter drops: {top}")
 
-    # Score all rows and write back to CSV so Sheet has sortable scores
+    # Post-fetch cleanup + scoring (all idempotent; advanced/applied rows are
+    # never touched by any of these):
     if not args.dry_run:
+        # Collapse any duplicates the fetch introduced (URL or role+location).
+        dedup_tracker_by_role(tracker_path, use_location=use_loc)
+        # Drop sourced rows that require > max_exp_years or carry a senior title.
+        if filters.get("prune_over_experience", True):
+            from profile_config import drop_senior_titles as _psd
+            exp_pruned, exp_reasons, _ = prune_over_experience(
+                tracker_path,
+                max_years=float(filters.get("max_exp_years", 2)),
+                drop_senior=_psd(),
+                drop_bad=bool(filters.get("drop_exp_bad", True)),
+            )
+            if exp_pruned:
+                print(f"==> pruned {exp_pruned} over-experience/senior row(s) "
+                      f"[{', '.join(f'{k}: {v}' for k, v in exp_reasons.most_common())}].")
+        # Verify job links: flag link_status and (by default) remove dead/expired
+        # sourced rows. Never removes UNKNOWN (bot-walled) or applied/advanced rows.
+        if filters.get("check_links", True):
+            _run_link_check(tracker_path, filters, dry_run=False)
+
+        # Score all rows and write back to CSV so Sheet has sortable scores
         subprocess.run(["uv", "run", "score.py", "--write-scores"],
                        cwd=str(tracker_path.parent), capture_output=True, text=True)
         print("  Scores updated in tracker.")

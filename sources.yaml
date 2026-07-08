@@ -81,6 +81,18 @@ filters:
   # Fresher profile (~6 months exp): drop senior roles and 3+ yr requirements at fetch time.
   drop_exp_bad: true
   max_exp_years: 2
+  prune_over_experience: true     # also clean EXISTING sourced rows that exceed the above (senior title or > max_exp_years)
+  # Dedup: keep every genuinely distinct posting; collapse only TRUE duplicates
+  # (same canonical URL, or identical company+role+location).
+  dedup_use_location: true        # true (default) = same role in different cities stays a separate row; false = merge city re-listings
+  # Dead-link check: HTTP-verify tracker URLs and set link_status = live/dead/expired.
+  check_links: true               # run during fetch (cached in .linkcheck_cache.json; re-runs are cheap)
+  link_check_drop_dead: true      # true (default) = REMOVE dead/expired sourced rows (never UNKNOWN, never applied/advanced); false = only mark link_status
+  link_check_concurrency: 8       # max in-flight requests overall
+  link_check_per_host_delay: 1.0  # seconds between requests to the SAME host (be polite)
+  link_check_timeout: 15
+  link_check_ttl_days: 7          # re-check a live URL after this many days
+  link_check_dead_ttl_days: 30    # re-check a dead/expired URL after this many days
   # Do NOT auto-remove rows from tracker unless YOU mark not_applicable in Sheet.
   drop_expired_at_fetch: true
   auto_prune_geo_failures: true   # remove US-onsite / remote-US rows; keeps global/USD remote

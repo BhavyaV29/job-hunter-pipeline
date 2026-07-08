@@ -33,7 +33,7 @@ TRACKER = Path(__file__).parent / "tracker.csv"
 TRACKER_BAK = Path(__file__).parent / "tracker.csv.bak"
 SHEET_TAB = "tracker"
 
-# Canonical 26-column schema (mirrors fetch_jobs.py FIELDS exactly).
+# Canonical schema (mirrors fetch_jobs.py FIELDS exactly).
 # stage and url sit right after score so the most actionable columns are
 # visible without horizontal scrolling.
 FIELDS: list[str] = [
@@ -41,7 +41,7 @@ FIELDS: list[str] = [
     "salary", "deadline", "source", "applied_date", "contact_name",
     "contact_email", "job_id", "resume_variant", "referral_contact", "oa_date",
     "phone_date", "tech_date", "onsite_date", "offer_details", "next_action",
-    "next_action_date", "notes", "exp_years", "exp_match",
+    "next_action_date", "notes", "exp_years", "exp_match", "link_status",
 ]
 
 # Sheet version wins for these fields during --sync (user edits these in the Sheet)
@@ -54,7 +54,7 @@ USER_FIELDS: frozenset[str] = frozenset({
 # CSV version wins for these fields during --sync (pipeline populates them)
 PIPELINE_FIELDS: frozenset[str] = frozenset({
     "date_found", "company", "role", "location", "salary", "source", "deadline",
-    "score", "exp_years", "exp_match",
+    "score", "exp_years", "exp_match", "link_status",
 })
 
 STAGE_VALUES: list[str] = [

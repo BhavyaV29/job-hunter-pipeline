@@ -2,6 +2,12 @@
 
 Defaults reproduce the fresher (~0–1 yr) behaviour; a mid/senior profile keeps
 senior titles and lifts the experience ceiling.
+
+Drop semantics (all configurable per call / via the profile):
+  * required years > max_exp_years                       -> drop  (exp_gt_N)
+  * exp_match == "bad" when drop_exp_bad                 -> drop  (exp_bad)
+  * clear seniority title when drop_senior_titles        -> drop  (senior_title)
+Roles with NO stated experience are KEPT (unknown is never dropped here).
 """
 from __future__ import annotations
 
@@ -11,10 +17,12 @@ from experience import parse_experience
 from profile_config import drop_senior_titles as _profile_drop_senior
 from profile_config import max_exp_years as _profile_max_exp
 
-# Hard-drop title patterns — senior / clearly out of range before ATS noise.
+# Hard-drop title patterns — clearly senior / out of range before ATS noise.
+# Conservative: standalone Senior/Sr./Staff/Principal/Lead/Manager/Director plus
+# level markers (SDE/Engineer III+). Kept as one toggle (drop_senior_titles).
 _SENIOR_TITLE_RE = re.compile(
-    r"\b(?:senior|staff|principal|director|head of|vp|vice president|"
-    r"architect|lead engineer|tech lead|engineering manager|"
+    r"\b(?:senior|sr\.?|staff|principal|director|head\s+of|vp|vice\s+president|"
+    r"architect|lead|manager|"
     r"sde\s*(?:iii|iv|3|4)|engineer\s*(?:iii|iv|3|4)|"
     r"\d+\s*\+\s*years?)\b",
     re.I,
@@ -36,6 +44,11 @@ _BODY_SHOP_RE = re.compile(
 )
 
 
+def is_senior_title(title: str) -> bool:
+    """True when the title alone is a clear seniority signal."""
+    return bool(_SENIOR_TITLE_RE.search((title or "").strip()))
+
+
 def passes_fresher_filter(
     title: str,
     description: str = "",
@@ -52,7 +65,7 @@ def passes_fresher_filter(
         max_exp_years = _profile_max_exp(fallback=2.0)
 
     t = (title or "").strip()
-    if drop_senior_titles and _SENIOR_TITLE_RE.search(t):
+    if drop_senior_titles and is_senior_title(t):
         return False, "senior_title"
 
     blob = f"{t} {(description or '')}".lower()
