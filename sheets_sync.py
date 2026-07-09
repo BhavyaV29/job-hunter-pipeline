@@ -766,8 +766,40 @@ def cmd_push() -> None:
     print(f"Done. Sheet updated with {len(rows)} data rows + formatted header.")
 
 
+def _merge_not_applicable_blacklist(
+    sheet_rows: list[dict],
+    prior_rows: list[dict],
+) -> tuple[list[dict], int]:
+    """Re-attach CSV-only ``not_applicable`` rows after a Sheet pull.
+
+    ``cmd_push`` hides ``not_applicable`` from the Sheet (permanent dedup
+    blacklist stays in CSV only). A naive pull would wipe that blacklist and
+    let dismissed jobs reappear on the next fetch. Preserve prior CSV rows
+    whose stage is ``not_applicable`` and whose URL is not already on the Sheet.
+    """
+    sheet_urls = {
+        (r.get("url") or "").strip()
+        for r in sheet_rows
+        if (r.get("url") or "").strip()
+    }
+    kept: list[dict] = []
+    for row in prior_rows:
+        if (row.get("stage") or "").strip() != "not_applicable":
+            continue
+        url = (row.get("url") or "").strip()
+        if not url or url in sheet_urls:
+            continue
+        kept.append(row)
+        sheet_urls.add(url)
+    return sheet_rows + kept, len(kept)
+
+
 def cmd_pull() -> None:
-    """Sheets -> CSV: overwrite local tracker.csv with Sheet data."""
+    """Sheets -> CSV: overwrite local tracker.csv with Sheet data.
+
+    Preserves CSV-only ``not_applicable`` blacklist rows that were intentionally
+    excluded from the Sheet on the previous push.
+    """
     result = _env_check()
     if result is None:
         return
@@ -790,15 +822,24 @@ def cmd_pull() -> None:
     if actual - expected:
         print(f"WARNING: Sheet has extra columns not in local schema: {sorted(actual - expected)}")
 
+    prior_rows, _ = _load_csv()
+    merged_rows, na_kept = _merge_not_applicable_blacklist(sheet_rows, prior_rows)
+
     # Write the CSV in the canonical FIELDS order (by NAME), NOT the raw Sheet
     # column order — a manual column reorder in the Sheet must never reshuffle the
     # CSV (that would misalign fetch_jobs.py's append). Any extra Sheet-only
     # columns are preserved at the end so no user data is lost.
     out_fields = list(FIELDS) + [f for f in sheet_fields if f not in FIELDS]
-    _save_csv(sheet_rows, out_fields)
+    _save_csv(merged_rows, out_fields)
+    na_note = (
+        f"\n  (preserved {na_kept} not_applicable blacklist row(s) from prior CSV)"
+        if na_kept else ""
+    )
     print(
-        f"Pulled {len(sheet_rows)} rows from Sheet -> tracker.csv\n"
+        f"Pulled {len(sheet_rows)} rows from Sheet -> tracker.csv"
+        f" ({len(merged_rows)} after blacklist merge)\n"
         f"  (previous tracker.csv backed up to tracker.csv.bak)"
+        f"{na_note}"
     )
 
 

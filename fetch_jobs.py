@@ -2335,6 +2335,30 @@ def _save_fetch_state(state_path: Path, state: dict) -> None:
     state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
+def _run_score_write(tracker_path: Path) -> bool:
+    """Run ``score.py --write-scores`` and surface failures.
+
+    Returns True on success. On failure prints stderr and returns False so the
+    caller can skip pushing stale/unscored rows to the Sheet.
+    """
+    result = subprocess.run(
+        ["uv", "run", "score.py", "--write-scores"],
+        cwd=str(tracker_path.parent),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        print("  Scores updated in tracker.")
+        return True
+    err = (result.stderr or result.stdout or "").strip() or "(no output)"
+    print(
+        f"  ERROR: score.py --write-scores failed (exit {result.returncode}); "
+        f"Sheet push skipped to avoid stale scores.\n"
+        f"  stderr: {err}"
+    )
+    return False
+
+
 def _pull_sheet_if_configured(tracker_path: Path) -> None:
     """Pull Google Sheet → tracker.csv before fetching.
 
@@ -2353,6 +2377,9 @@ def _pull_sheet_if_configured(tracker_path: Path) -> None:
     )
     if result.returncode == 0:
         print("  [sheets] Pulled Sheet → CSV before fetch.")
+        if result.stdout.strip():
+            for line in result.stdout.strip().splitlines():
+                print(f"  [sheets] {line}")
     else:
         print(
             f"  [sheets] WARNING: Sheet → CSV pull failed "
@@ -2446,8 +2473,7 @@ def main() -> int:
             print("  No junk listings to remove.")
         if not args.dry_run:
             dedup_tracker_by_role(tracker_path, use_location=use_loc)
-            subprocess.run(["uv", "run", "score.py", "--write-scores"],
-                           cwd=str(tracker_path.parent), capture_output=True, text=True)
+            _run_score_write(tracker_path)
         return 0
 
     # --dedup-only: collapse role-duplicates + rescore, no fetching/Sheet sync.
@@ -2455,9 +2481,8 @@ def main() -> int:
         removed = dedup_tracker_by_role(tracker_path, use_location=use_loc)
         if not removed:
             print("  No normalized (company+role+location) duplicates to collapse.")
-        subprocess.run(["uv", "run", "score.py", "--write-scores"],
-                       cwd=str(tracker_path.parent), capture_output=True, text=True)
-        print("  Scores updated in tracker (dedup-only run; no fetch, no Sheet sync).")
+        if _run_score_write(tracker_path):
+            print("  (dedup-only run; no fetch, no Sheet sync).")
         return 0
 
     # Pull Sheet → CSV first so manually-added rows participate in dedup and pruning
@@ -2679,21 +2704,28 @@ def main() -> int:
             _run_link_check(tracker_path, filters, dry_run=False)
 
         # Score all rows and write back to CSV so Sheet has sortable scores
-        subprocess.run(["uv", "run", "score.py", "--write-scores"],
-                       cwd=str(tracker_path.parent), capture_output=True, text=True)
-        print("  Scores updated in tracker.")
+        scored_ok = _run_score_write(tracker_path)
 
         # Push clean CSV to Google Sheets if configured (silently skipped when env
         # vars are absent). We use --push (overwrite) rather than --sync (merge)
         # because the pull at the top of this run already captured all user edits;
         # a sync would re-import Sheet rows that were intentionally pruned (e.g.
         # not_applicable rows) and inflate the Sheet count on every run.
-        if (os.environ.get("GOOGLE_SHEETS_ID", "").strip()
+        # Skip push when scoring failed so we never overwrite Sheet with stale scores.
+        if scored_ok and (os.environ.get("GOOGLE_SHEETS_ID", "").strip()
                 and os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()):
             sync_script = base / "sheets_sync.py"
             print("\n==> Pushing clean CSV to Google Sheets (--push)...")
             try:
-                subprocess.run(["uv", "run", str(sync_script), "--push"], check=False)
+                push = subprocess.run(
+                    ["uv", "run", str(sync_script), "--push"],
+                    cwd=str(tracker_path.parent),
+                    capture_output=True,
+                    text=True,
+                )
+                if push.returncode != 0:
+                    err = (push.stderr or push.stdout or "").strip() or "(no output)"
+                    print(f"    WARNING: Sheets push failed (exit {push.returncode}): {err}")
             except FileNotFoundError:
                 print("    (uv not found — Sheets push skipped; run manually: uv run sheets_sync.py --push)")
 

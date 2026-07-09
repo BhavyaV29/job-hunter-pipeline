@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
 import sys
 from datetime import date
@@ -44,7 +45,10 @@ DRAFTS_MD    = REPO_ROOT / "outreach" / "referral_drafts.md"
 # Candidate constants
 # ---------------------------------------------------------------------------
 CANDIDATE_NAME  = "Bhavya Vashisht"
-CANDIDATE_EMAIL = "bvashisht_be22@thapar.edu"
+# Prefer CANDIDATE_EMAIL env; fall back to personal Gmail (never hardcode college email).
+CANDIDATE_EMAIL = os.environ.get(
+    "CANDIDATE_EMAIL", "bhavyavashisht119@gmail.com"
+).strip() or "bhavyavashisht119@gmail.com"
 GITHUB          = "github.com/BhavyaV29"
 PORTFOLIO       = "bhavyaportfolio.site"
 
