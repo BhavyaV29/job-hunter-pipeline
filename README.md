@@ -1,5 +1,7 @@
 # job-hunter-pipeline
 
+[![Live demo](https://img.shields.io/badge/live%20demo-online-brightgreen?logo=render&logoColor=white)](https://job-hunter-pipeline.onrender.com) [![Source](https://img.shields.io/badge/source-GitHub-181717?logo=github)](https://github.com/BhavyaV29/job-hunter-pipeline) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Automated job **sourcing, ranking & outreach**. It pulls fresh *technical* roles
 (SDE / Backend / ML / Applied-AI, India + remote) from ~15 sources into one ranked
 tracker, so you start each day with a triaged shortlist instead of doom-scrolling
@@ -50,6 +52,13 @@ Then:
 Everyone runs their **own** instance with their **own** keys — no shared server
 holds anyone's secrets. One-click blueprints for **Render** and **Fly.io** plus a
 `Dockerfile` / `docker-compose.yml` are included — see **[DEPLOY.md](DEPLOY.md)**.
+
+**Daily auto-refresh:** a bundled GitHub Actions workflow
+(`.github/workflows/refresh.yml`) wakes your deployed instance and triggers one
+pipeline run per day (02:30 UTC / 08:00 IST) — handy when the host sleeps while idle
+(e.g. Render's free tier), where an in-process timer can't fire. Opt in with the
+`APP_URL`, `ADMIN_TOKEN`, and `ENABLE_DAILY_REFRESH` repo variables (see the workflow
+header); it simply automates the dashboard's **Run refresh** button.
 
 > Public showcase? Set `DEMO_MODE=1` to serve read-only sample data — that's exactly
 > what the [live demo](https://job-hunter-pipeline.onrender.com) runs.
