@@ -56,9 +56,11 @@ profile:
 
   # Scalar score weights (defaults shown).
   # remote_boost: 8
-  # brand_a_boost: 30
-  # brand_b_boost: 15
-  # dream_boost: 50
+  # brand_a_boost: 10
+  # brand_b_boost: 5
+  # dream_boost: 15
+  # official_apply_boost: 25
+  # shortlisted_boost: 15
 
 # ---- Filtering: edit freely. A role is kept if its title matches an include
 #      keyword, has no exclude keyword, and (if location_include is non-empty)
@@ -217,7 +219,20 @@ filters:
     - maharashtra
     - haryana
 
-# Personal priority targets — +50 score boost in score.py (floats to top of tier).
+# Shared hard limits apply across every logical route using the same provider.
+# `--force` never bypasses these limits. Environment variables with the same
+# names documented in .env.example can override the defaults.
+provider_limits:
+  serpapi:
+    monthly_budget: 45
+    max_calls_per_run: 2
+    cache_ttl_hours: 72
+  jsearch:
+    monthly_budget: 120
+    max_calls_per_run: 2
+    cache_ttl_hours: 24
+
+# Personal priority targets — modest desirability boost in score.py.
 dream_companies:
   - razorpay
   - postman
@@ -287,11 +302,22 @@ aggregators:
     categories: ["Software Engineering", "Data Science", "Data and Analytics", "Computer and IT"]
     levels: ["Entry Level"]
     pages: 3
-  - source: remotive          # free; worldwide remote (Remotive board)
-    categories: ["software-dev", "data", "devops"]
+  - source: remotive          # free; one daily feed request, filtered locally
   - source: remoteok          # free; global remote listings
   - source: arbeitnow         # free; EU startup/tech board
+    pages: 2
   - source: weworkremotely    # free RSS; global remote startups (programming + devops)
+  - source: himalayas         # official API; country/timezone restrictions are structured
+    country: "IN"
+    seniority: "Entry-level,Mid-level"
+    employment_type: "Full Time"
+    pages: 1
+    queries: ["backend engineer", "platform engineer", "ai engineer"]
+  - source: jobicy            # official API; one APAC + one worldwide request
+    geos: ["apac", ""]
+    industry: dev
+    count: 100
+  - source: hn_hiring         # official monthly thread; direct founder/employee posts
 
   # ---- public / guest endpoints of consumer platforms (NO login, polite) ----
   - source: linkedin_guest    # public LinkedIn jobs-guest cards (no auth)
@@ -316,11 +342,13 @@ aggregators:
       - "graduate software engineer"
       - "python developer fresher"
     results_per_keyword: 40
+    jsearch_query_batch_size: 1
+    serpapi_query_batch_size: 1
     serpapi_queries:
       - "site:naukri.com inurl:job-listings backend developer bangalore"
       - "site:naukri.com inurl:job-listings software engineer india"
       - "site:naukri.com inurl:job-listings machine learning fresher"
-  - source: hirist            # API + SerpApi site:hirist.com/j/ fallback
+  - source: hirist            # API → Playwright → budgeted SerpApi fallback
     keywords:
       - "software engineer fresher"
       - "backend developer entry"
@@ -328,11 +356,13 @@ aggregators:
       - "python developer"
       - "golang developer"
     pages: 2
+    serpapi_query_batch_size: 1
     serpapi_queries:
       - "site:hirist.com/j/ backend developer bangalore"
       - "site:hirist.com/j/ software engineer india"
       - "site:hirist.com/j/ machine learning engineer"
   - source: cutshort          # city __NEXT_DATA__ pages (HTTP, no key)
+    serpapi_query_batch_size: 1
     city_paths:
       - /jobs/backend-developer-jobs-in-bangalore-bengaluru
       - /jobs/machine-learning-ml-jobs-in-bangalore-bengaluru
@@ -340,7 +370,8 @@ aggregators:
       - /jobs/backend-developer-jobs-in-delhi-ncr-gurgaon-noida
       - /jobs/backend-developer-jobs-in-pune
       - /jobs/fresher-jobs-in-bangalore-bengaluru
-  - source: wellfound         # SerpApi first, Playwright fallback
+  - source: wellfound         # Playwright first, budgeted SerpApi fallback
+    serpapi_query_batch_size: 1
     serpapi_queries:
       - "site:wellfound.com/jobs backend engineer india"
       - "site:wellfound.com/jobs software engineer bangalore startup"
@@ -351,10 +382,11 @@ aggregators:
       - "site:wellfound.com/jobs remote backend engineer europe"
       - "site:wellfound.com/jobs remote software engineer worldwide startup"
 
-  # ---- OPTIONAL keyed sources (20h cooldown each unless --force) ----
+  # ---- OPTIONAL keyed sources (cooldown + cache + hard provider budgets) ----
   - source: jsearch           # OPTIONAL - needs RAPIDAPI_KEY. Aggregates Google for
     num_pages: 1              #   Jobs => LinkedIn / Indeed / Glassdoor / ZipRecruiter.
-    date_posted: month        #   all|today|3days|week|month
+    date_posted: week         #   all|today|3days|week|month
+    query_batch_size: 2       # persistent round-robin; never run all queries at once
     queries:
       - "software engineer fresher in India"
       - "backend developer entry level in India"
@@ -382,17 +414,3 @@ aggregators:
       - "junior software engineer remote global"
       - "machine learning engineer remote worldwide"
     results_per_page: 40
-  - source: serpapi           # OPTIONAL - needs SERPAPI_KEY. Google Jobs engine.
-    gl: "in"
-    queries:
-      - "software engineer fresher india"
-      - "backend developer entry level india"
-      - "machine learning engineer fresher india"
-      - "startup software engineer bangalore"
-      - "series a software engineer india"
-      - "fintech backend developer india"
-      - "remote software engineer worldwide startup"
-      - "junior backend developer remote europe"
-      - "remote software engineer japan english"
-      - "site:cutshort.io/job backend engineer startup bangalore"
-      - "site:hirist.com/j/ startup software engineer"

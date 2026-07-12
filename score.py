@@ -1,19 +1,12 @@
 # /// script
-# requires-python = ">=3.9"
+# requires-python = ">=3.10"
 # dependencies = ["pyyaml"]
 # ///
 """
-Rank the roles in tracker.csv by a DOMINANT salary/remote TIER, then by how well
-each fits your profile within that tier, so you triage the strongest matches
-first each morning.
-
-Tiers (highest first; LPA thresholds read from sources.yaml, with defaults):
-    T1  India-eligible REMOTE  AND  salary >= min_salary_lpa     (default 10)
-    T2  India ONSITE           AND  salary >= min_salary_lpa
-    T3  India-eligible REMOTE  AND  remote_floor_lpa <= salary < min_salary_lpa  (7-10)
-    T4  Unknown salary (kept on benefit-of-the-doubt)
-The tier dominates the ranking (large score gaps); the existing stack/keyword fit
-+ remote boost only breaks ties WITHIN a tier.
+Rank tracker.csv by likelihood of earning a screen: posting freshness, explicit
+experience fit, official employer application path, and profile-aware stack
+alignment. Compensation/remote tiers remain visible desirability signals, but
+no longer bury a fresh direct role beneath a stale aggregator listing.
 
 Usage:
     uv run score.py            # rank stage=sourced roles (your triage queue)
@@ -29,6 +22,7 @@ import csv
 import datetime as dt
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from geo import (
     DEFAULT_MIN_SALARY_LPA,
@@ -85,11 +79,11 @@ BRAND_TIERS = {
         "linear", "ramp", "rippling",
     },
 }
-BRAND_A_BOOST = scalar("brand_a_boost", 30)
-BRAND_B_BOOST = scalar("brand_b_boost", 15)
-DREAM_BOOST = scalar("dream_boost", 50)
+BRAND_A_BOOST = scalar("brand_a_boost", 10)
+BRAND_B_BOOST = scalar("brand_b_boost", 5)
+DREAM_BOOST = scalar("dream_boost", 15)
 # Staffing/bootcamp/repost listings cap below real product-company roles.
-STAFFING_SCORE_CAP = 180
+STAFFING_SCORE_CAP = 20
 
 # Geography boosts (override via profile.location_boosts).
 LOCATION_BOOST = weight_overrides("location_boosts") or {
@@ -108,22 +102,42 @@ REMOTE_BOOST = scalar("remote_boost", 8)
 REMOTE_SIGNALS = ("remote", "worldwide", "anywhere", "work from home", "wfh",
                   "distributed")
 
-# Small recency boost so freshly-found roles float up (date_found proxy).
-RECENCY_BOOST = {0: 3, 1: 3, 2: 2, 3: 2, 4: 1, 5: 1, 6: 1}
+# Freshness is the strongest screen-likelihood feature. `posted_date` is used
+# when available; older rows fall back to `date_found`.
+RECENCY_BUCKETS = (
+    (3, 45),
+    (7, 30),
+    (14, 12),
+    (21, 0),
+    (30, -20),
+)
 
-# ---- 4-tier salary/remote ranking -----------------------------------------
-# Tier scores dominate: the gaps (250) dwarf the keyword-fit range (~ -30..+45),
-# so tiers always sort first and fit only breaks ties within a tier.
-TIER_SCORE = {1: 1000, 2: 750, 3: 500, 4: 250, 0: 0}
+# Compensation desirability is useful but subordinate to freshness/eligibility.
+TIER_SCORE = {1: 25, 2: 20, 3: 10, 4: 0, 0: -100}
 
 # Urgency boost for T1/T2 roles whose deadline is within EXPIRY_WARN_DAYS days.
-# +500 is large enough to push them above all other T1/T2 roles but below the
-# next tier boundary.  Both values can be overridden via sources.yaml.
 EXPIRY_WARN_DAYS = 7
-URGENCY_BOOST = 500
+URGENCY_BOOST = 15
 
 # Experience-match adjustments (override via profile.exp_match_adjust).
-EXP_MATCH_ADJUST = weight_overrides("exp_match_adjust") or {"good": 5, "warn": -10, "bad": -30, "unknown": 0}
+EXP_MATCH_ADJUST = weight_overrides("exp_match_adjust") or {
+    "good": 25, "warn": 5, "bad": -80, "unknown": -8,
+}
+OFFICIAL_APPLY_BOOST = scalar("official_apply_boost", 25)
+SHORTLISTED_BOOST = scalar("shortlisted_boost", 15)
+DIRECT_ATS_SOURCES = frozenset({
+    "greenhouse", "lever", "ashby", "workable", "recruitee",
+    "workday", "smartrecruiters",
+})
+ATS_HOSTS = (
+    "greenhouse.io", "lever.co", "ashbyhq.com", "workable.com",
+    "recruitee.com", "smartrecruiters.com", "myworkdayjobs.com",
+)
+AGGREGATOR_HOSTS = (
+    "linkedin.com", "naukri.com", "cutshort.io", "wellfound.com",
+    "hirist.com", "remotive.com", "remoteok.com", "jobicy.com",
+    "himalayas.app", "adzuna.", "themuse.com", "arbeitnow.com",
+)
 
 
 def _recency(date_found: str) -> int:
@@ -131,7 +145,13 @@ def _recency(date_found: str) -> int:
         d = dt.date.fromisoformat((date_found or "").strip())
     except ValueError:
         return 0
-    return RECENCY_BOOST.get((dt.date.today() - d).days, 0)
+    age = (dt.date.today() - d).days
+    if age < 0:
+        return 0
+    for max_days, value in RECENCY_BUCKETS:
+        if age <= max_days:
+            return value
+    return -45
 
 
 def _is_remote(role: str, location: str) -> bool:
@@ -158,6 +178,18 @@ def salary_to_inr(disp: str):
     return salary_display_to_inr(disp)
 
 
+def _company_name_matches(company: str, target: str) -> bool:
+    company_slug = norm_company(company)
+    target_slug = norm_company(target)
+    if not company_slug or not target_slug:
+        return False
+    return (
+        company_slug == target_slug
+        or company_slug.startswith(target_slug + " ")
+        or company_slug.endswith(" " + target_slug)
+    )
+
+
 def _brand_boost(company: str, salary_display: str) -> int:
     """Return prestige boost when salary is unknown, using brand as a pay proxy.
 
@@ -166,13 +198,30 @@ def _brand_boost(company: str, salary_display: str) -> int:
     """
     if salary_to_inr(salary_display) is not None:
         return 0
-    co = (company or "").lower()
     for name in BRAND_TIERS["tier_a"]:
-        if name in co:
+        if _company_name_matches(company, name):
             return BRAND_A_BOOST
     for name in BRAND_TIERS["tier_b"]:
-        if name in co:
+        if _company_name_matches(company, name):
             return BRAND_B_BOOST
+    return 0
+
+
+def _official_apply_boost(row: dict) -> int:
+    if (row.get("source") or "").strip().lower() in DIRECT_ATS_SOURCES:
+        return OFFICIAL_APPLY_BOOST
+    try:
+        parsed = urlsplit((row.get("url") or "").strip())
+    except ValueError:
+        return 0
+    host = (parsed.hostname or "").lower()
+    if any(marker in host for marker in ATS_HOSTS):
+        return OFFICIAL_APPLY_BOOST
+    if any(marker in host for marker in AGGREGATOR_HOSTS):
+        return 0
+    path = (parsed.path or "").lower()
+    if any(marker in path for marker in ("/careers", "/jobs", "/apply")):
+        return OFFICIAL_APPLY_BOOST
     return 0
 
 
@@ -236,10 +285,8 @@ def load_dream_companies(sources_path) -> frozenset[str]:
 def _dream_boost(company: str, dreams: frozenset[str]) -> int:
     if not dreams:
         return 0
-    co = (company or "").lower()
-    slug = norm_company(company)
     for name in dreams:
-        if name in co or name in slug:
+        if _company_name_matches(company, name):
             return DREAM_BOOST
     return 0
 
@@ -252,22 +299,24 @@ def _exp_match_adjust(row: dict) -> int:
 def total_score(row: dict, min_inr: float, remote_floor_inr: float,
                 warn_days: int = EXPIRY_WARN_DAYS,
                 dreams: frozenset[str] | None = None) -> int:
-    """Dominant tier score + within-tier fit score + urgency boost.
-
-    T1/T2 roles with a known deadline within warn_days days receive URGENCY_BOOST
-    (+500) so they float to the top of their tier and are impossible to miss.
-    """
+    """Screen-likelihood score plus a smaller compensation/desirability signal."""
     if dreams is None:
         dreams = load_dream_companies(Path(__file__).parent / "sources.yaml")
     tier = tier_of(row.get("role", ""), row.get("location", ""),
                    row.get("salary", ""), min_inr, remote_floor_inr)
     fit = score(
-        row.get("role", ""), row.get("location", ""), row.get("date_found", ""),
+        row.get("role", ""),
+        row.get("location", ""),
+        row.get("posted_date") or row.get("date_found", ""),
         row.get("notes", ""),
     )
     base = TIER_SCORE.get(tier, 0) + fit + _brand_boost(
         row.get("company", ""), row.get("salary", "")
-    ) + _exp_match_adjust(row) + _dream_boost(row.get("company", ""), dreams)
+    ) + _exp_match_adjust(row) + _dream_boost(
+        row.get("company", ""), dreams
+    ) + _official_apply_boost(row)
+    if (row.get("stage") or "").strip().lower() == "shortlisted":
+        base += SHORTLISTED_BOOST
     if is_staffing_listing(
         row.get("company", ""), row.get("url", ""), row.get("role", "")
     ):
@@ -328,11 +377,14 @@ def main() -> None:
 
     rows = list(csv.DictReader(path.open(newline="", encoding="utf-8")))
     if not args.all:
-        # Only stage=sourced/new rows are actionable triage candidates.
+        # Sourced and explicitly shortlisted rows are actionable triage candidates.
         # Applied (and beyond) roles drop out once marked so they don't clutter
         # the queue. not_applicable is intentionally excluded here — those rows
         # are dismissed by the user and pruned automatically on the next fetch.
-        rows = [r for r in rows if r.get("stage") in ("sourced", "new")]
+        rows = [
+            r for r in rows
+            if r.get("stage") in ("sourced", "new", "shortlisted")
+        ]
 
     def row_tier(r):
         return tier_of(r.get("role", ""), r.get("location", ""),
@@ -377,8 +429,8 @@ def main() -> None:
     scope = "all" if args.all else "sourced"
     print(
         f"\nShowing top {min(args.top, len(ranked))} of {len(ranked)} {scope} roles "
-        f"(T1 remote>={min_inr/1e5:g} > T2 onsite>={min_inr/1e5:g} > "
-        f"T3 remote {remote_floor_inr/1e5:g}-{min_inr/1e5:g} > T4 unknown). "
+        "(ranked for fresh, eligible, direct applications; T1–T4 labels show "
+        "compensation/remote desirability only). "
         f"Apply, then `uv run pipeline.py --applied <url>` to drop them from triage."
     )
 

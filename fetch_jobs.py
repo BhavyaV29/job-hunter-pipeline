@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.9"
+# requires-python = ">=3.10"
 # dependencies = ["requests", "pyyaml", "beautifulsoup4", "httpx"]
 # ///
 """
@@ -37,7 +37,7 @@ stage=sourced.
 Run daily:
     uv run fetch_jobs.py
     uv run fetch_jobs.py --sources sources.yaml --tracker tracker.csv
-    uv run fetch_jobs.py --force        # bypass the 20h paid-API cooldown
+    uv run fetch_jobs.py --force        # bypass source cooldown; hard budgets remain
     uv run fetch_jobs.py --dedup-only   # collapse (company,role,location) dups + rescore, no fetch
 
 Optional keyed sources (skipped gracefully unless their env vars are set):
@@ -51,6 +51,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import email.utils
 import html
 import json
 import os
@@ -79,6 +80,7 @@ from geo import (
 from fresher_filter import passes_fresher_filter, is_senior_title
 from async_fetch import run_parallel_fetch
 from llm_jd import enrich_job, llm_enabled
+from search_budget import SearchBudget, SearchBudgetExhausted
 
 TIMEOUT = 20
 
@@ -247,13 +249,8 @@ def _parse_iso_date(s) -> str:
         return ""
 
 
-def _parse_deadline_proxy(updated_str, proxy_days: int = DEADLINE_PROXY_DAYS) -> str:
-    """Return ISO date = parsed_post_date + proxy_days, or '' if unparseable.
-
-    30-day freshness proxy — NOT a guaranteed expiry date. Sources that provide
-    real deadlines (JSearch, Adzuna) should call _parse_iso_date on their real
-    field instead of this function.
-    """
+def _parse_posted_date(updated_str) -> str:
+    """Normalize ISO, epoch, RFC-2822, or relative timestamps to YYYY-MM-DD."""
     if not updated_str:
         return ""
     s = str(updated_str).strip()
@@ -262,26 +259,42 @@ def _parse_deadline_proxy(updated_str, proxy_days: int = DEADLINE_PROXY_DAYS) ->
     # ISO date prefix (most API sources return ISO datetime or date)
     iso_d = _parse_iso_date(s)
     if iso_d:
-        try:
-            return (dt.date.fromisoformat(iso_d) + dt.timedelta(days=proxy_days)).isoformat()
-        except ValueError:
-            pass
+        return iso_d
     # Unix timestamp (RemoteOK / Arbeitnow sometimes return epoch seconds or ms)
     try:
         ts = float(s)
         if ts > 1e10:          # milliseconds -> seconds
             ts /= 1000
-        return (dt.date.fromtimestamp(ts) + dt.timedelta(days=proxy_days)).isoformat()
+        return dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc).date().isoformat()
     except (ValueError, OSError, OverflowError):
+        pass
+    # RSS/RFC-2822 strings, e.g. "Fri, 10 Jul 2026 09:00:00 +0000".
+    try:
+        parsed = email.utils.parsedate_to_datetime(s)
+        if parsed:
+            return parsed.date().isoformat()
+    except (TypeError, ValueError, OverflowError):
         pass
     # Relative human string ("2 days ago", "1 week ago") — SerpApi uses this
     rel = re.search(r"(\d+)\s+(minute|hour|day|week|month)s?\s+ago", s.lower())
     if rel:
         n, unit = int(rel.group(1)), rel.group(2)
         delta = {"minute": 0, "hour": 0, "day": n, "week": n * 7, "month": n * 30}[unit]
-        d = dt.date.today() - dt.timedelta(days=delta)
-        return (d + dt.timedelta(days=proxy_days)).isoformat()
+        return (dt.date.today() - dt.timedelta(days=delta)).isoformat()
     return ""
+
+
+def _parse_deadline_proxy(updated_str, proxy_days: int = DEADLINE_PROXY_DAYS) -> str:
+    """Return parsed post date + proxy_days, or '' when the date is unknown."""
+    posted = _parse_posted_date(updated_str)
+    if not posted:
+        return ""
+    try:
+        return (
+            dt.date.fromisoformat(posted) + dt.timedelta(days=proxy_days)
+        ).isoformat()
+    except ValueError:
+        return ""
 
 
 def clean(text: str) -> str:
@@ -551,22 +564,20 @@ def fetch_themuse(cfg: dict):
 
 
 def fetch_remotive(cfg: dict):
-    """Remotive remote-jobs API - free, no key. Remote-first, so empty -> Remote."""
-    categories = cfg.get("categories") or ["software-dev"]
+    """Remotive remote-jobs API - one free request, then filter locally."""
+    data = _get("https://remotive.com/api/remote-jobs")
     out = []
-    for cat in categories:
-        data = _get("https://remotive.com/api/remote-jobs", {"category": cat})
-        for j in data.get("jobs", []):
-            out.append(
-                {
-                    "company": j.get("company_name", ""),
-                    "title": j.get("title", ""),
-                    "location": j.get("candidate_required_location", "") or "Remote",
-                    "url": j.get("url", ""),
-                    "updated": j.get("publication_date", "") or "",
-                    "remote": True,  # Remotive is a remote-only board
-                }
-            )
+    for j in data.get("jobs", []):
+        out.append(
+            {
+                "company": j.get("company_name", ""),
+                "title": j.get("title", ""),
+                "location": j.get("candidate_required_location", "") or "Remote",
+                "url": j.get("url", ""),
+                "updated": j.get("publication_date", "") or "",
+                "remote": True,  # Remotive is a remote-only board
+            }
+        )
     return out
 
 
@@ -591,23 +602,33 @@ def fetch_remoteok(cfg: dict):
 
 
 def fetch_arbeitnow(cfg: dict):
-    """Arbeitnow job-board API - free, no key."""
-    data = _get("https://www.arbeitnow.com/api/job-board-api")
+    """Arbeitnow job-board API - free, no key, with a small page cap."""
+    pages = max(1, int(cfg.get("pages", 2)))
     out = []
-    for j in data.get("data", []):
-        loc = j.get("location", "")
-        if not loc and j.get("remote"):
-            loc = "Remote"
-        out.append(
-            {
-                "company": j.get("company_name", ""),
-                "title": j.get("title", ""),
-                "location": loc,
-                "url": j.get("url", ""),
-                "updated": str(j.get("created_at", "")),
-                "remote": bool(j.get("remote")),
-            }
+    for page in range(1, pages + 1):
+        data = _get(
+            "https://www.arbeitnow.com/api/job-board-api",
+            {"page": page},
         )
+        jobs = data.get("data", [])
+        if not jobs:
+            break
+        for j in jobs:
+            loc = j.get("location", "")
+            if not loc and j.get("remote"):
+                loc = "Remote"
+            out.append(
+                {
+                    "company": j.get("company_name", ""),
+                    "title": j.get("title", ""),
+                    "location": loc,
+                    "url": j.get("url", ""),
+                    "updated": str(j.get("created_at", "")),
+                    "remote": bool(j.get("remote")),
+                }
+            )
+        if page < pages:
+            time.sleep(POLITE_DELAY)
     return out
 
 
@@ -651,6 +672,254 @@ def fetch_weworkremotely(cfg: dict):
             )
         time.sleep(POLITE_DELAY)
     return _quality_filter_jobs(out, "weworkremotely")
+
+
+def _timestamp_ms_to_iso(value) -> str:
+    try:
+        return dt.datetime.fromtimestamp(
+            float(value) / 1000,
+            tz=dt.timezone.utc,
+        ).isoformat()
+    except (TypeError, ValueError, OSError, OverflowError):
+        return ""
+
+
+def _timezone_allows_india(value) -> bool:
+    if isinstance(value, (int, float)):
+        return abs(float(value) - 5.5) < 0.01
+    text = str(value).strip().lower().replace(" ", "")
+    if "india" in text or any(marker in text for marker in ("+5:30", "+05:30")):
+        return True
+    match = re.fullmatch(r"(?:utc)?([+-]?\d+(?:\.\d+)?)", text)
+    return bool(match and abs(float(match.group(1)) - 5.5) < 0.01)
+
+
+def fetch_himalayas(cfg: dict):
+    """Himalayas official keyless API — India/worldwide remote roles."""
+    queries = cfg.get("queries") or ["backend engineer", "platform engineer", "ai engineer"]
+    pages = max(1, int(cfg.get("pages", 1)))
+    out: list[dict] = []
+    seen: set[str] = set()
+    for query in queries:
+        for page in range(1, pages + 1):
+            data = _get(
+                "https://himalayas.app/jobs/api/search",
+                {
+                    "q": query,
+                    "country": cfg.get("country", "IN"),
+                    "seniority": cfg.get("seniority", "Entry-level,Mid-level"),
+                    "employment_type": cfg.get("employment_type", "Full Time"),
+                    "sort": "recent",
+                    "page": page,
+                },
+            )
+            jobs = data.get("jobs") or []
+            if not jobs:
+                break
+            for j in jobs:
+                url = j.get("applicationLink") or ""
+                if not url or url in seen:
+                    continue
+                raw_restrictions = j.get("locationRestrictions") or []
+                restrictions = (
+                    list(raw_restrictions)
+                    if isinstance(raw_restrictions, (list, tuple, set))
+                    else [raw_restrictions]
+                )
+                countries = [
+                    (
+                        str(item.get("name") or item.get("alpha2") or "")
+                        if isinstance(item, dict)
+                        else str(item)
+                    )
+                    for item in restrictions
+                ]
+                timezone_value = j.get("timezoneRestrictions")
+                raw_timezones = (
+                    list(timezone_value)
+                    if isinstance(timezone_value, (list, tuple, set))
+                    else ([] if timezone_value in (None, "") else [timezone_value])
+                )
+                timezones = [str(v) for v in raw_timezones]
+                if raw_timezones and not any(
+                    _timezone_allows_india(value) for value in raw_timezones
+                ):
+                    continue
+                location = (
+                    "Remote — " + ", ".join(filter(None, countries))
+                    if countries
+                    else "Remote — Worldwide"
+                )
+                if timezones:
+                    location += f" ({', '.join(timezones)})"
+                salary = None
+                if j.get("minSalary") or j.get("maxSalary"):
+                    salary = {
+                        "min": j.get("minSalary"),
+                        "max": j.get("maxSalary"),
+                        "currency": j.get("currency") or "USD",
+                        "period": str(j.get("salaryPeriod") or "annual").upper(),
+                    }
+                seniority_value = j.get("seniority") or []
+                seniority = (
+                    ", ".join(str(value) for value in seniority_value)
+                    if isinstance(seniority_value, (list, tuple, set))
+                    else str(seniority_value)
+                )
+                description = clean(j.get("description") or j.get("excerpt") or "")
+                if seniority:
+                    description = f"Seniority: {seniority}. {description}"
+                seen.add(url)
+                out.append({
+                    "company": j.get("companyName", ""),
+                    "title": j.get("title", ""),
+                    "location": location,
+                    "url": url,
+                    "updated": _timestamp_ms_to_iso(j.get("pubDate")),
+                    "deadline": _parse_iso_date(
+                        _timestamp_ms_to_iso(j.get("expiryDate"))
+                    ),
+                    "description": description,
+                    "salary": salary,
+                    "remote": True,
+                })
+            if page < pages:
+                time.sleep(POLITE_DELAY)
+    return _quality_filter_jobs(out, "himalayas")
+
+
+def fetch_jobicy(cfg: dict):
+    """Jobicy official keyless API — APAC and worldwide remote listings."""
+    geos = cfg.get("geos")
+    if geos is None:
+        geos = ["apac", ""]
+    out: list[dict] = []
+    seen: set[str] = set()
+    for geo in geos:
+        params = {
+            "count": min(100, max(1, int(cfg.get("count", 100)))),
+            "industry": cfg.get("industry", "dev"),
+        }
+        if geo:
+            params["geo"] = geo
+        data = _get("https://jobicy.com/api/v2/remote-jobs", params)
+        for j in data.get("jobs", []) or []:
+            url = j.get("url") or ""
+            if not url or url in seen:
+                continue
+            location_label = str(j.get("jobGeo") or "Anywhere")
+            description = clean(j.get("jobDescription") or j.get("jobExcerpt") or "")
+            level = str(j.get("jobLevel") or "")
+            if level:
+                description = f"Seniority: {level}. {description}"
+            salary = None
+            if j.get("salaryMin") or j.get("salaryMax"):
+                salary = {
+                    "min": j.get("salaryMin"),
+                    "max": j.get("salaryMax"),
+                    "currency": j.get("salaryCurrency") or "USD",
+                    "period": str(j.get("salaryPeriod") or "yearly").upper(),
+                }
+            seen.add(url)
+            out.append({
+                "company": j.get("companyName", ""),
+                "title": j.get("jobTitle", ""),
+                "location": f"Remote — {location_label}",
+                "url": url,
+                "updated": j.get("pubDate", "") or "",
+                "description": description,
+                "salary": salary,
+                "remote": True,
+            })
+        time.sleep(POLITE_DELAY)
+    return _quality_filter_jobs(out, "jobicy")
+
+
+_HN_ROLE_RE = re.compile(
+    r"\b(?:junior |graduate |entry[- ]level |associate )?"
+    r"(?:(?:backend|platform|infrastructure|software|machine learning|ml|ai) "
+    r"(?:software )?(?:engineer|developer)|"
+    r"site reliability engineer|sre|golang developer|python developer)\b",
+    re.IGNORECASE,
+)
+_HN_APPLY_HOSTS = (
+    "greenhouse.io",
+    "lever.co",
+    "ashbyhq.com",
+    "workable.com",
+    "recruitee.com",
+    "smartrecruiters.com",
+    "myworkdayjobs.com",
+)
+
+
+def fetch_hn_hiring(cfg: dict):
+    """Latest official HN Who's Hiring thread via the keyless Algolia API."""
+    from bs4 import BeautifulSoup
+
+    search = _get(
+        "https://hn.algolia.com/api/v1/search_by_date",
+        {
+            "query": "Ask HN: Who is hiring?",
+            "tags": "story,author_whoishiring",
+            "hitsPerPage": 24,
+        },
+    )
+    exact = []
+    for hit in search.get("hits", []) or []:
+        title = str(hit.get("title") or "")
+        if re.fullmatch(r"Ask HN: Who is hiring\? \([^)]+\)", title):
+            exact.append(hit)
+    if not exact:
+        raise SkipSource("Could not locate the official HN Who's Hiring thread.")
+    thread = max(exact, key=lambda h: str(h.get("created_at") or ""))
+    thread_id = str(thread.get("objectID") or thread.get("story_id") or "")
+    if not thread_id:
+        raise SkipSource("HN Who's Hiring thread had no story ID.")
+    item = _get(f"https://hn.algolia.com/api/v1/items/{thread_id}")
+
+    out: list[dict] = []
+    for comment in item.get("children", []) or []:
+        raw = str(comment.get("text") or "")
+        if not raw:
+            continue
+        soup = BeautifulSoup(raw, "html.parser")
+        text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True)).strip()
+        role_match = _HN_ROLE_RE.search(text)
+        if not role_match:
+            continue
+        parts = [p.strip(" -—") for p in text.split("|") if p.strip()]
+        company = parts[0] if parts else ""
+        if not company or len(company) > 100:
+            continue
+        header = " | ".join(parts[:4]) if parts else text[:240]
+        links = [
+            str(a.get("href") or "")
+            for a in soup.find_all("a")
+            if str(a.get("href") or "").startswith(("http://", "https://"))
+        ]
+        preferred = next(
+            (
+                link
+                for link in links
+                if any(host in link for host in _HN_APPLY_HOSTS)
+                or any(marker in link.lower() for marker in ("/careers", "/jobs", "/apply"))
+            ),
+            "",
+        )
+        url = preferred or (links[0] if links else "")
+        if not url:
+            url = f"https://news.ycombinator.com/item?id={comment.get('id')}"
+        out.append({
+            "company": company,
+            "title": role_match.group(0),
+            "location": header,
+            "url": url,
+            "updated": comment.get("created_at", "") or "",
+            "description": text,
+            "remote": "remote" in header.lower(),
+        })
+    return _quality_filter_jobs(out, "hn_hiring")
 
 
 def fetch_adzuna(cfg: dict):
@@ -726,19 +995,192 @@ def fetch_adzuna(cfg: dict):
     return out
 
 
-def _serpapi_on_cooldown(fetch_state: dict | None) -> bool:
-    """True when the main serpapi aggregator ran within COOLDOWN_HOURS."""
-    if not fetch_state:
-        return False
-    on_cd, _ = _is_on_cooldown(fetch_state, "serpapi")
-    return on_cd
+SERPAPI_DEFAULT_MONTHLY_BUDGET = 45
+SERPAPI_DEFAULT_RUN_BUDGET = 2
+SERPAPI_DEFAULT_CACHE_HOURS = 72
+JSEARCH_DEFAULT_MONTHLY_BUDGET = 120
+JSEARCH_DEFAULT_RUN_BUDGET = 2
+JSEARCH_DEFAULT_CACHE_HOURS = 24
+_DEFAULT_SERPAPI_BUDGET: SearchBudget | None = None
+_DEFAULT_JSEARCH_BUDGET: SearchBudget | None = None
 
 
-def _jsearch_on_cooldown(fetch_state: dict | None) -> bool:
-    if not fetch_state:
-        return False
-    on_cd, _ = _is_on_cooldown(fetch_state, "jsearch")
-    return on_cd
+def _int_setting(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _float_setting(value, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _build_serpapi_budget(cfg: dict, state_dir: Path) -> SearchBudget:
+    limits = (cfg.get("provider_limits") or {}).get("serpapi") or {}
+    monthly = _int_setting(
+        os.environ.get("SERPAPI_MONTHLY_BUDGET", limits.get("monthly_budget")),
+        SERPAPI_DEFAULT_MONTHLY_BUDGET,
+    )
+    per_run = _int_setting(
+        os.environ.get("SERPAPI_MAX_CALLS_PER_RUN", limits.get("max_calls_per_run")),
+        SERPAPI_DEFAULT_RUN_BUDGET,
+    )
+    ttl = _float_setting(
+        os.environ.get("SERPAPI_CACHE_TTL_HOURS", limits.get("cache_ttl_hours")),
+        SERPAPI_DEFAULT_CACHE_HOURS,
+    )
+    return SearchBudget(
+        "serpapi",
+        state_path=state_dir / ".serpapi_budget.json",
+        cache_path=state_dir / ".serpapi_cache.json",
+        monthly_budget=monthly,
+        max_calls_per_run=per_run,
+        cache_ttl_hours=ttl,
+    )
+
+
+def _serpapi_budget(cfg: dict) -> SearchBudget:
+    broker = cfg.get("_serpapi_budget")
+    if isinstance(broker, SearchBudget):
+        return broker
+    global _DEFAULT_SERPAPI_BUDGET
+    if _DEFAULT_SERPAPI_BUDGET is None:
+        _DEFAULT_SERPAPI_BUDGET = _build_serpapi_budget(
+            cfg,
+            Path(__file__).resolve().parent,
+        )
+    return _DEFAULT_SERPAPI_BUDGET
+
+
+def _serpapi_search(cfg: dict, *, route: str, engine: str, params: dict) -> dict:
+    """Fetch one SerpApi result through the shared cache/quota circuit."""
+    key = os.environ.get("SERPAPI_KEY")
+    if not key:
+        raise SkipSource("SERPAPI_KEY not set.")
+    broker = _serpapi_budget(cfg)
+    cached = broker.cached(engine, params)
+    if isinstance(cached, dict):
+        return cached
+    try:
+        broker.reserve(route)
+    except SearchBudgetExhausted as exc:
+        raise SkipSource(str(exc)) from exc
+
+    request_params = {**params, "api_key": key}
+    response = _request_with_retry(
+        "GET",
+        "https://serpapi.com/search",
+        params=request_params,
+        timeout=30,
+        # Quota responses trip the shared circuit immediately; never retry 429.
+        retry_status=frozenset({502, 503, 504}),
+    )
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    error = str(payload.get("error") or "")
+    if response.status_code in {401, 403, 429} or error:
+        reason = error or f"HTTP {response.status_code}"
+        lowered = reason.lower()
+        monthly = any(
+            marker in lowered
+            for marker in ("monthly", "searches per month", "plan limit", "quota")
+        )
+        broker.open_circuit(reason, until_next_month=monthly)
+        raise SkipSource(f"SerpApi unavailable: {reason}")
+    response.raise_for_status()
+    broker.store(engine, params, payload)
+    return payload
+
+
+def _build_jsearch_budget(cfg: dict, state_dir: Path) -> SearchBudget:
+    limits = (cfg.get("provider_limits") or {}).get("jsearch") or {}
+    monthly = _int_setting(
+        os.environ.get("JSEARCH_MONTHLY_BUDGET", limits.get("monthly_budget")),
+        JSEARCH_DEFAULT_MONTHLY_BUDGET,
+    )
+    per_run = _int_setting(
+        os.environ.get("JSEARCH_MAX_CALLS_PER_RUN", limits.get("max_calls_per_run")),
+        JSEARCH_DEFAULT_RUN_BUDGET,
+    )
+    ttl = _float_setting(
+        os.environ.get("JSEARCH_CACHE_TTL_HOURS", limits.get("cache_ttl_hours")),
+        JSEARCH_DEFAULT_CACHE_HOURS,
+    )
+    return SearchBudget(
+        "jsearch",
+        state_path=state_dir / ".jsearch_budget.json",
+        cache_path=state_dir / ".jsearch_cache.json",
+        monthly_budget=monthly,
+        max_calls_per_run=per_run,
+        cache_ttl_hours=ttl,
+    )
+
+
+def _jsearch_budget(cfg: dict) -> SearchBudget:
+    broker = cfg.get("_jsearch_budget")
+    if isinstance(broker, SearchBudget):
+        return broker
+    global _DEFAULT_JSEARCH_BUDGET
+    if _DEFAULT_JSEARCH_BUDGET is None:
+        _DEFAULT_JSEARCH_BUDGET = _build_jsearch_budget(
+            cfg,
+            Path(__file__).resolve().parent,
+        )
+    return _DEFAULT_JSEARCH_BUDGET
+
+
+def _jsearch_search(
+    cfg: dict,
+    *,
+    route: str,
+    headers: dict,
+    params: dict,
+) -> dict:
+    broker = _jsearch_budget(cfg)
+    cached = broker.cached("jsearch", params)
+    if isinstance(cached, dict):
+        return cached
+    try:
+        broker.reserve(route)
+    except SearchBudgetExhausted as exc:
+        raise SkipSource(str(exc)) from exc
+
+    response = _request_with_retry(
+        "GET",
+        "https://jsearch.p.rapidapi.com/search",
+        headers=headers,
+        params=params,
+        timeout=60,
+        retry_status=frozenset({502, 503, 504}),
+    )
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if response.status_code in {401, 403, 429}:
+        reason = str(
+            payload.get("message")
+            or payload.get("error")
+            or f"HTTP {response.status_code}"
+        )
+        lowered = reason.lower()
+        broker.open_circuit(
+            reason,
+            until_next_month=any(
+                marker in lowered
+                for marker in ("monthly", "quota", "plan", "too many requests")
+            ),
+        )
+        raise SkipSource(f"JSearch unavailable: {reason}")
+    response.raise_for_status()
+    broker.store("jsearch", params, payload)
+    return payload
 
 
 def _serpapi_organic_jobs(
@@ -750,33 +1192,35 @@ def _serpapi_organic_jobs(
     default_location: str = "India",
     source_label: str = "site search",
     source_name: str = "",
-    fetch_state: dict | None = None,
-    force_serpapi: bool = False,
 ) -> list[dict]:
     """Shared SerpApi Google organic search for site:-scoped job boards."""
-    key = os.environ.get("SERPAPI_KEY")
-    if not key:
-        raise SkipSource(
-            f"SERPAPI_KEY not set — required for {source_label}."
-        )
-    if not force_serpapi and not cfg.get("_force") and _serpapi_on_cooldown(fetch_state):
-        raise SkipSource(
-            f"SerpApi on {COOLDOWN_HOURS}h cooldown — {source_label} deferred."
-        )
-    queries = cfg.get("serpapi_queries") or cfg.get("queries") or default_queries
+    if not os.environ.get("SERPAPI_KEY"):
+        raise SkipSource(f"SERPAPI_KEY not set — required for {source_label}.")
+    queries = list(cfg.get("serpapi_queries") or cfg.get("queries") or default_queries)
     gl = cfg.get("gl", "in")
     src = source_name or site_substring.split(".")[0]
+    broker = _serpapi_budget(cfg)
+    queries = broker.rotate(
+        f"organic:{src}",
+        queries,
+        _int_setting(cfg.get("serpapi_query_batch_size"), 1),
+    )
     out: list[dict] = []
     seen_urls: set[str] = set()
     for q in queries:
-        r = _request_with_retry(
-            "GET", "https://serpapi.com/search",
-            params={"engine": "google", "q": q, "hl": "en", "gl": gl,
-                    "api_key": key, "num": 20},
-            timeout=30,
+        data = _serpapi_search(
+            cfg,
+            route=f"organic:{src}",
+            engine="google",
+            params={
+                "engine": "google",
+                "q": q,
+                "hl": "en",
+                "gl": gl,
+                "num": 20,
+            },
         )
-        r.raise_for_status()
-        for item in r.json().get("organic_results", []) or []:
+        for item in data.get("organic_results", []) or []:
             url = (item.get("link") or "").split("?")[0]
             if not url or site_substring not in url or url in seen_urls:
                 continue
@@ -821,27 +1265,36 @@ def fetch_jsearch(cfg: dict):
         )
     host = "jsearch.p.rapidapi.com"
     headers = {"X-RapidAPI-Key": key, "X-RapidAPI-Host": host}
-    queries = cfg.get("queries") or [
+    queries = list(cfg.get("queries") or [
         "software engineer fresher in India",
         "backend developer entry level in India",
         "machine learning engineer fresher in India",
         "graduate software engineer India",
         "junior software engineer remote",
         "backend engineer entry level remote",
-    ]
+    ])
     num_pages = int(cfg.get("num_pages", 1))
-    date_posted = cfg.get("date_posted", "month")
+    date_posted = cfg.get("date_posted", "week")
+    broker = _jsearch_budget(cfg)
+    queries = broker.rotate(
+        "google_jobs",
+        queries,
+        _int_setting(cfg.get("query_batch_size"), 2),
+    )
     out = []
     for q in queries:
-        r = _request_with_retry(
-            "GET", f"https://{host}/search",
+        data = _jsearch_search(
+            cfg,
+            route="google_jobs",
             headers=headers,
-            params={"query": q, "page": "1", "num_pages": str(num_pages),
-                    "date_posted": date_posted},
-            timeout=60,
+            params={
+                "query": q,
+                "page": "1",
+                "num_pages": str(num_pages),
+                "date_posted": date_posted,
+            },
         )
-        r.raise_for_status()
-        for j in r.json().get("data", []) or []:
+        for j in data.get("data", []) or []:
             loc = ", ".join(
                 filter(None, [j.get("job_city"), j.get("job_state"),
                               j.get("job_country")])
@@ -876,26 +1329,35 @@ def fetch_serpapi(cfg: dict):
     """SerpApi Google Jobs engine - an alternate paid/keyed route to Google for
     Jobs (LinkedIn / Indeed / Glassdoor / etc). OPTIONAL: needs SERPAPI_KEY
     (https://serpapi.com/); skips gracefully if unset."""
-    key = os.environ.get("SERPAPI_KEY")
-    if not key:
+    if not os.environ.get("SERPAPI_KEY"):
         raise SkipSource(
             "SERPAPI_KEY not set - optional source skipped (key at serpapi.com)."
         )
-    queries = cfg.get("queries") or [
+    queries = list(cfg.get("queries") or [
         "software engineer fresher india", "backend developer entry level india",
         "machine learning engineer fresher india",
-    ]
+    ])
     gl = cfg.get("gl", "in")
+    broker = _serpapi_budget(cfg)
+    queries = broker.rotate(
+        "google_jobs",
+        queries,
+        _int_setting(cfg.get("serpapi_query_batch_size"), 1),
+    )
     out = []
     for q in queries:
-        r = _request_with_retry(
-            "GET", "https://serpapi.com/search",
-            params={"engine": "google_jobs", "q": q, "hl": "en", "gl": gl,
-                    "api_key": key},
-            timeout=30,
+        data = _serpapi_search(
+            cfg,
+            route="google_jobs",
+            engine="google_jobs",
+            params={
+                "engine": "google_jobs",
+                "q": q,
+                "hl": "en",
+                "gl": gl,
+            },
         )
-        r.raise_for_status()
-        for j in r.json().get("jobs_results", []) or []:
+        for j in data.get("jobs_results", []) or []:
             opts = j.get("apply_options") or []
             url = (opts[0].get("link") if opts else "") or j.get("share_link", "")
             posted = (j.get("detected_extensions") or {}).get("posted_at", "")
@@ -969,7 +1431,7 @@ def fetch_naukri(cfg: dict):
         except ImportError:
             errors.append("Playwright not installed")
     rapid_key = os.environ.get("RAPIDAPI_KEY")
-    if rapid_key and (cfg.get("_force") or not _jsearch_on_cooldown(cfg.get("_fetch_state"))):
+    if rapid_key:
         try:
             out = _quality_filter_jobs(_fetch_naukri_jsearch(cfg, rapid_key), "naukri")
             if out:
@@ -992,8 +1454,6 @@ def fetch_naukri(cfg: dict):
                 url_path_markers=("job-listings-", "job-details/"),
                 source_label="Naukri site search",
                 source_name="naukri",
-                fetch_state=cfg.get("_fetch_state"),
-                force_serpapi=True,
             )
             if out:
                 return out
@@ -1010,25 +1470,34 @@ def fetch_naukri(cfg: dict):
 
 def _fetch_naukri_jsearch(cfg: dict, rapid_key: str) -> list[dict]:
     """Pull Naukri postings surfaced by JSearch (Google for Jobs)."""
-    keywords = cfg.get("keywords") or [
+    keywords = list(cfg.get("keywords") or [
         "software engineer", "backend developer",
         "machine learning engineer", "sde",
-    ]
+    ])
     host = "jsearch.p.rapidapi.com"
     headers = {"X-RapidAPI-Key": rapid_key, "X-RapidAPI-Host": host}
+    broker = _jsearch_budget(cfg)
+    keywords = broker.rotate(
+        "naukri",
+        keywords,
+        _int_setting(cfg.get("jsearch_query_batch_size"), 1),
+    )
     out: list[dict] = []
     seen: set[str] = set()
     for kw in keywords:
         q = f"{kw} naukri india"
-        r = _request_with_retry(
-            "GET", f"https://{host}/search",
+        data = _jsearch_search(
+            cfg,
+            route="naukri",
             headers=headers,
-            params={"query": q, "page": "1", "num_pages": "1",
-                    "date_posted": "month"},
-            timeout=60,
+            params={
+                "query": q,
+                "page": "1",
+                "num_pages": "1",
+                "date_posted": "week",
+            },
         )
-        r.raise_for_status()
-        for j in r.json().get("data", []) or []:
+        for j in data.get("data", []) or []:
             url = j.get("job_apply_link") or j.get("job_google_link") or ""
             if not url or "naukri.com" not in url or url in seen:
                 continue
@@ -1209,10 +1678,23 @@ def fetch_linkedin_guest(cfg: dict):
 
 
 def fetch_wellfound(cfg: dict):
-    """Wellfound — SerpApi first (reliable), then Playwright Apollo fallback."""
+    """Wellfound — free Playwright route first, budgeted SerpApi only as fallback."""
     errors: list[str] = []
 
-    # 1) SerpApi — proven on VPN/residential; uses queries from sources.yaml.
+    # 1) Free browser route, before any paid search.
+    try:
+        from board_playwright import fetch_wellfound_playwright, _playwright_available
+        if _playwright_available():
+            out = _quality_filter_jobs(fetch_wellfound_playwright(cfg), "wellfound")
+            if out:
+                return out
+            errors.append("Playwright returned 0 jobs")
+        else:
+            errors.append("Playwright not installed")
+    except SkipSource as e:
+        errors.append(f"Playwright: {e}")
+
+    # 2) Budgeted/cached site search; one rotated query per invocation by default.
     if os.environ.get("SERPAPI_KEY"):
         try:
             out = _serpapi_organic_jobs(
@@ -1226,8 +1708,6 @@ def fetch_wellfound(cfg: dict):
                 url_path_markers=("/jobs/",),
                 source_label="Wellfound site search",
                 source_name="wellfound",
-                fetch_state=cfg.get("_fetch_state"),
-                force_serpapi=True,
             )
             if out:
                 return _quality_filter_jobs(out, "wellfound")
@@ -1236,17 +1716,6 @@ def fetch_wellfound(cfg: dict):
             errors.append(f"SerpApi: {e}")
     else:
         errors.append("SERPAPI_KEY not set")
-
-    # 2) Playwright — when SerpApi empty and browser available.
-    try:
-        from board_playwright import fetch_wellfound_playwright, _playwright_available
-        if _playwright_available():
-            out = _quality_filter_jobs(fetch_wellfound_playwright(cfg), "wellfound")
-            if out:
-                return out
-            errors.append("Playwright returned 0 jobs")
-    except SkipSource as e:
-        errors.append(f"Playwright: {e}")
 
     if errors:
         print(f"  [wellfound] {'; '.join(errors)}")
@@ -1328,7 +1797,20 @@ def fetch_hirist(cfg: dict):
     if out:
         return _quality_filter_jobs(out, "hirist")
 
-    # SerpApi — PROVEN when API 503 (individual hirist.com/j/ URLs).
+    # Free browser interception before any paid fallback.
+    try:
+        from board_playwright import fetch_hirist_playwright, _playwright_available
+        if _playwright_available():
+            out = _quality_filter_jobs(fetch_hirist_playwright(cfg), "hirist")
+            if out:
+                return out
+            api_errors.append("Playwright returned 0 jobs")
+        else:
+            api_errors.append("Playwright not installed")
+    except SkipSource as e:
+        api_errors.append(str(e))
+
+    # Budgeted/cached SerpApi fallback when both free paths fail.
     if os.environ.get("SERPAPI_KEY"):
         print(f"  [hirist] API failed ({', '.join(api_errors)}); trying SerpApi site:hirist.com/j/.")
         try:
@@ -1344,25 +1826,12 @@ def fetch_hirist(cfg: dict):
                 url_path_markers=("/j/",),
                 source_label="Hirist site search",
                 source_name="hirist",
-                fetch_state=cfg.get("_fetch_state"),
-                force_serpapi=True,  # board fetchers bypass main-aggregator cooldown
             )
             if serp_out:
                 return serp_out
             api_errors.append("SerpApi returned 0 valid jobs")
         except SkipSource as e:
             api_errors.append(str(e))
-
-    # Playwright intercept (works when browser can reach jobseeker-api).
-    try:
-        from board_playwright import fetch_hirist_playwright, _playwright_available
-        if _playwright_available():
-            out = _quality_filter_jobs(fetch_hirist_playwright(cfg), "hirist")
-            if out:
-                return out
-            api_errors.append("Playwright returned 0 jobs")
-    except SkipSource as e:
-        api_errors.append(str(e))
 
     raise SkipSource(
         "Hirist exhausted all routes (" + "; ".join(api_errors) + ")."
@@ -1413,8 +1882,6 @@ def _fetch_cutshort_serpapi(cfg: dict) -> list[dict]:
         url_path_markers=("/job/",),
         source_label="Cutshort site search",
         source_name="cutshort",
-        fetch_state=cfg.get("_fetch_state"),
-        force_serpapi=True,
     )
     if not out:
         raise SkipSource(
@@ -1429,6 +1896,9 @@ AGGREGATOR_FETCHERS = {
     "remoteok": fetch_remoteok,
     "arbeitnow": fetch_arbeitnow,
     "weworkremotely": fetch_weworkremotely,
+    "himalayas": fetch_himalayas,
+    "jobicy": fetch_jobicy,
+    "hn_hiring": fetch_hn_hiring,
     "adzuna": fetch_adzuna,
     "jsearch": fetch_jsearch,
     "serpapi": fetch_serpapi,
@@ -1454,9 +1924,13 @@ DEFAULT_AGGREGATORS = [
         "levels": ["Entry Level"],
         "pages": 3,
     },
-    {"source": "remotive", "categories": ["software-dev"]},
+    {"source": "remotive"},
     {"source": "remoteok"},
-    {"source": "arbeitnow"},
+    {"source": "arbeitnow", "pages": 2},
+    {"source": "weworkremotely"},
+    {"source": "himalayas", "pages": 1},
+    {"source": "jobicy", "geos": ["apac", ""]},
+    {"source": "hn_hiring"},
     {
         "source": "adzuna",
         "countries": ["in", "gb", "us"],
@@ -1466,8 +1940,12 @@ DEFAULT_AGGREGATORS = [
         ],
         "results_per_page": 50,
     },
-    {"source": "jsearch", "num_pages": 1, "date_posted": "month"},
-    {"source": "serpapi", "gl": "in"},
+    {
+        "source": "jsearch",
+        "num_pages": 1,
+        "date_posted": "week",
+        "query_batch_size": 2,
+    },
     {"source": "naukri", "experience": 0, "results_per_keyword": 40},
     {"source": "linkedin_guest", "locations": ["India"], "pages": 2,
      "experience_levels": "1,2,3"},
@@ -1481,13 +1959,13 @@ _V1_FIELDS = [
     "referral_contact", "resume_variant", "notes", "next_action_date",
 ]
 
-# Canonical 26-column schema. `stage` and `url` sit right after `score` so the
+# Canonical 28-column schema. `stage` and `url` sit right after `score` so the
 # most actionable columns are visible without horizontal scrolling in the Sheet.
 # sheets_sync.py FIELDS mirrors this EXACT order. Every script reads/writes by
 # column NAME (DictReader/DictWriter), never by positional index, so order
 # changes can never misalign data.
 FIELDS = [
-    "date_found", "company", "score", "stage", "url", "role", "location",
+    "date_found", "posted_date", "company", "score", "stage", "url", "role", "location",
     "salary", "deadline", "source", "applied_date", "contact_name",
     "contact_email", "job_id", "resume_variant", "referral_contact", "oa_date",
     "phone_date", "tech_date", "onsite_date", "offer_details", "next_action",
@@ -1550,7 +2028,7 @@ def infer_resume_variant(role: str) -> str:
 
 def make_row(company: str, role: str, location: str, source: str, url: str,
              salary: str = "", deadline: str = "", description: str = "",
-             *, llm_enrichment: dict | None = None) -> dict:
+             *, posted_date: str = "", llm_enrichment: dict | None = None) -> dict:
     exp_years, exp_match = parse_experience(role, description)
     if llm_enrichment:
         if llm_enrichment.get("exp_years") is not None:
@@ -1572,6 +2050,7 @@ def make_row(company: str, role: str, location: str, source: str, url: str,
         notes = notes[:200]
     return {
         "date_found": dt.date.today().isoformat(),
+        "posted_date": posted_date,
         "company": clean(company),
         "score": "",
         "role": clean(role),
@@ -1612,8 +2091,13 @@ def _process_fetched_job(
     seen_keys: set,
     geo: Counter,
     drop_stats: Counter,
+    process_stats: Counter | None = None,
 ) -> dict | None:
     """Filter one fetched job; return tracker row or None if dropped."""
+    def outcome(name: str) -> None:
+        if process_stats is not None:
+            process_stats[name] += 1
+
     url = j.get("url") or ""
     company_name, title = normalize_job_fields(
         company_name or j.get("company") or "",
@@ -1628,9 +2112,14 @@ def _process_fetched_job(
     key = _norm_key(company_name or "TBD", title, j.get("location"),
                     use_location=use_location)
     canon = _canon_url(url)
-    if not url or canon in seen or key in seen_keys:
+    if not url:
+        outcome("missing_url")
+        return None
+    if canon in seen or key in seen_keys:
+        outcome("duplicate")
         return None
     if not matches(title, j.get("location", ""), filters):
+        outcome("title_or_location")
         return None
 
     desc = j.get("description") or ""
@@ -1642,6 +2131,7 @@ def _process_fetched_job(
     )
     if not ok:
         drop_stats[fresher_reason] += 1
+        outcome(fresher_reason)
         return None
 
     llm_en = None
@@ -1654,6 +2144,7 @@ def _process_fetched_job(
         )
         if not llm_en.get("keep", True):
             drop_stats["llm_skip"] += 1
+            outcome("llm_skip")
             return None
 
     j_norm = dict(j)
@@ -1663,6 +2154,7 @@ def _process_fetched_job(
     result, salary_display = classify_job(j_norm, threshold_inr, remote_floor_inr)
     geo[result] += 1
     if result in DROP_RESULTS:
+        outcome(result)
         return None
 
     deadline_str = (
@@ -1672,12 +2164,14 @@ def _process_fetched_job(
         try:
             if dt.date.fromisoformat(deadline_str) < dt.date.today():
                 drop_stats["expired"] += 1
+                outcome("expired")
                 return None
         except ValueError:
             pass
 
-    seen.add(url)
+    seen.add(canon)
     seen_keys.add(key)
+    outcome("accepted")
     return make_row(
         company_name or "TBD",
         title,
@@ -1687,6 +2181,7 @@ def _process_fetched_job(
         salary_display,
         deadline_str,
         description=desc,
+        posted_date=_parse_posted_date(j.get("updated", "")),
         llm_enrichment=llm_en,
     )
 
@@ -1899,6 +2394,35 @@ def migrate_tracker_v6(tracker_path: Path) -> None:
     print(
         f"==> migrated {tracker_path.name} to v6 schema: "
         f"added link_status to {len(rows)} existing rows."
+    )
+
+
+def migrate_tracker_v7(tracker_path: Path) -> None:
+    """Add the source-provided posting date used by screen-likelihood ranking."""
+    if not tracker_path.exists():
+        return
+    with tracker_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        existing_fields = list(reader.fieldnames or [])
+        if "posted_date" in existing_fields:
+            return
+        rows = list(reader)
+
+    if "date_found" in existing_fields:
+        idx = existing_fields.index("date_found") + 1
+        new_fields = existing_fields[:idx] + ["posted_date"] + existing_fields[idx:]
+    else:
+        new_fields = ["posted_date"] + existing_fields
+    tmp = tracker_path.with_name(tracker_path.name + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=new_fields)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in new_fields})
+    tmp.replace(tracker_path)
+    print(
+        f"==> migrated {tracker_path.name} to v7 schema: "
+        f"added posted_date to {len(rows)} existing rows."
     )
 
 
@@ -2332,7 +2856,59 @@ def _load_fetch_state(state_path: Path) -> dict:
 
 def _save_fetch_state(state_path: Path, state: dict) -> None:
     """Persist the fetch state dict."""
-    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    tmp = state_path.with_name(state_path.name + ".tmp")
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    tmp.replace(state_path)
+
+
+def _record_source_metrics(
+    metrics: dict,
+    source: str,
+    *,
+    fetched: int,
+    added: int,
+    outcomes: Counter,
+    geo: Counter,
+) -> None:
+    entry = metrics.setdefault(
+        source,
+        {"fetched": 0, "added": 0, "outcomes": Counter(), "geo": Counter()},
+    )
+    entry["fetched"] += fetched
+    entry["added"] += added
+    entry["outcomes"].update(outcomes)
+    entry["geo"].update(geo)
+
+
+def _funnel_by_source(tracker_path: Path) -> dict:
+    if not tracker_path.exists():
+        return {}
+    counts: dict[str, Counter] = {}
+    with tracker_path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            source = (row.get("source") or "unknown").strip().lower()
+            stage = (row.get("stage") or "unknown").strip().lower()
+            counts.setdefault(source, Counter())[stage] += 1
+    return {
+        source: dict(sorted(stages.items()))
+        for source, stages in sorted(counts.items())
+    }
+
+
+def _append_fetch_metrics(path: Path, payload: dict) -> None:
+    """Append aggregate-only run telemetry; never job/company/query details."""
+    serializable = dict(payload)
+    serializable["sources"] = {
+        source: {
+            "fetched": int(values["fetched"]),
+            "added": int(values["added"]),
+            "outcomes": dict(sorted(values["outcomes"].items())),
+            "geo": dict(sorted(values["geo"].items())),
+        }
+        for source, values in sorted(payload.get("sources", {}).items())
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(serializable, sort_keys=True) + "\n")
 
 
 def _run_score_write(tracker_path: Path) -> bool:
@@ -2433,8 +3009,8 @@ def main() -> int:
     ap.add_argument("--sources", default="sources.yaml")
     ap.add_argument("--tracker", default="tracker.csv")
     ap.add_argument("--force", action="store_true",
-                    help="Bypass the 20-hour cooldown for paid API sources "
-                         "(jsearch, adzuna, serpapi).")
+                    help="Bypass source cooldown for paid APIs; hard provider "
+                         "budgets and caches still apply.")
     ap.add_argument("--dedup-only", action="store_true",
                     help="Collapse normalized (company,role,location) duplicate "
                          "rows in the tracker and rescore, then exit (no fetching).")
@@ -2459,6 +3035,7 @@ def main() -> int:
     migrate_tracker_v4(tracker_path)
     migrate_tracker_v5(tracker_path)
     migrate_tracker_v6(tracker_path)
+    migrate_tracker_v7(tracker_path)
 
     # --cleanup-junk: drop category pages / spam without fetching.
     if args.cleanup_junk:
@@ -2490,6 +3067,8 @@ def main() -> int:
 
     state_path = tracker_path.parent / ".fetch_state.json"
     fetch_state = _load_fetch_state(state_path)
+    serpapi_budget = _build_serpapi_budget(cfg, tracker_path.parent)
+    jsearch_budget = _build_jsearch_budget(cfg, tracker_path.parent)
 
     na_count = _prune_not_applicable(tracker_path)
     if na_count:
@@ -2530,9 +3109,11 @@ def main() -> int:
     # Parallel role-key dedup set: an incoming job is skipped if its URL is in
     # `seen` OR its normalized (company, role, location) key is in `seen_keys`.
     seen_keys = load_existing_keys(tracker_path, use_location=use_loc)
+    tracked_before_count = len(seen)
 
     geo = Counter()  # keep/drop result tallies across all sources
     drop_stats = Counter()
+    run_source_metrics: dict = {}
 
     new_rows, report = [], []
     company_tasks: list[tuple[str, object, tuple, dict]] = []
@@ -2557,14 +3138,27 @@ def main() -> int:
                 continue
             jobs = result
             kept = 0
+            source_geo = Counter()
+            source_drops = Counter()
+            source_outcomes = Counter()
             for j in jobs:
                 row = _process_fetched_job(
                     j, name, ats, filters, threshold_inr, remote_floor_inr,
-                    seen, seen_keys, geo, drop_stats,
+                    seen, seen_keys, source_geo, source_drops, source_outcomes,
                 )
                 if row:
                     kept += 1
                     new_rows.append(row)
+            geo.update(source_geo)
+            drop_stats.update(source_drops)
+            _record_source_metrics(
+                run_source_metrics,
+                f"ats:{ats}",
+                fetched=len(jobs),
+                added=kept,
+                outcomes=source_outcomes,
+                geo=source_geo,
+            )
             report.append(f"  - {name} ({ats}): {len(jobs)} open, {kept} new matches")
 
     # ---- aggregators: cross-employer APIs (parallel where not on cooldown) ----
@@ -2586,7 +3180,13 @@ def main() -> int:
                     f"cooldown 20h). Use --force to override."
                 )
                 continue
-        agg_cfg = {**agg, "_fetch_state": fetch_state, "_force": args.force}
+        agg_cfg = {
+            **agg,
+            "_fetch_state": fetch_state,
+            "_force": args.force,
+            "_serpapi_budget": serpapi_budget,
+            "_jsearch_budget": jsearch_budget,
+        }
         agg_tasks.append((src, fetch_agg, (agg_cfg,), {}))
         agg_labels[src] = src
 
@@ -2606,6 +3206,9 @@ def main() -> int:
                 _save_fetch_state(state_path, fetch_state)
             jobs = result
             kept = 0
+            source_geo = Counter()
+            source_drops = Counter()
+            source_outcomes = Counter()
             for j in jobs:
                 row = _process_fetched_job(
                     j,
@@ -2616,17 +3219,44 @@ def main() -> int:
                     remote_floor_inr,
                     seen,
                     seen_keys,
-                    geo,
-                    drop_stats,
+                    source_geo,
+                    source_drops,
+                    source_outcomes,
                 )
                 if row:
                     kept += 1
                     new_rows.append(row)
+            geo.update(source_geo)
+            drop_stats.update(source_drops)
+            _record_source_metrics(
+                run_source_metrics,
+                src,
+                fetched=len(jobs),
+                added=kept,
+                outcomes=source_outcomes,
+                geo=source_geo,
+            )
             agg_skipped_reports.append(
                 f"  - {src} (aggregator): {len(jobs)} fetched, {kept} new matches"
             )
 
     report.extend(agg_skipped_reports)
+    if os.environ.get("SERPAPI_KEY"):
+        budget = serpapi_budget.snapshot()
+        report.append(
+            "  ~ serpapi budget: "
+            f"{budget['run_calls']}/{budget['run_budget']} network calls this run, "
+            f"{budget['month_used']}/{budget['monthly_budget']} this month, "
+            f"{budget['cache_hits']} cache hit(s)"
+        )
+    if os.environ.get("RAPIDAPI_KEY"):
+        budget = jsearch_budget.snapshot()
+        report.append(
+            "  ~ jsearch budget: "
+            f"{budget['run_calls']}/{budget['run_budget']} network calls this run, "
+            f"{budget['month_used']}/{budget['monthly_budget']} this month, "
+            f"{budget['cache_hits']} cache hit(s)"
+        )
     expired_drops = drop_stats.get("expired", 0)
 
     # Append new rows in the EXISTING file's column order (read by NAME), so a
@@ -2663,6 +3293,24 @@ def main() -> int:
             w.writeheader()
         for r in new_rows:
             w.writerow(r)
+
+    provider_metrics = {}
+    if os.environ.get("SERPAPI_KEY"):
+        provider_metrics["serpapi"] = serpapi_budget.snapshot()
+    if os.environ.get("RAPIDAPI_KEY"):
+        provider_metrics["jsearch"] = jsearch_budget.snapshot()
+    _append_fetch_metrics(
+        tracker_path.parent / ".fetch_metrics.jsonl",
+        {
+            "schema_version": 1,
+            "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "new_rows": len(new_rows),
+            "tracked_before": tracked_before_count,
+            "sources": run_source_metrics,
+            "providers": provider_metrics,
+            "funnel_by_source": _funnel_by_source(tracker_path),
+        },
+    )
 
     print(
         f"\n==> {len(new_rows)} new roles added to {tracker_path.name} "

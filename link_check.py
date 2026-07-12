@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.9"
+# requires-python = ">=3.10"
 # dependencies = ["httpx"]
 # ///
 """Validate tracker job links so you stop clicking into dead / expired postings.

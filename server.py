@@ -185,7 +185,10 @@ def set_stage(request: Request, url: str = Form(...), stage: str = Form(...),
               view: str = Form("triage"), sort: str = Form("score"),
               q: str = Form(""), stage_filter: str = Form("")):
     require_writable(request)
-    store.update_stage(url, stage)
+    normalized_stage = stage.strip().lower()
+    if normalized_stage not in store.VALID_STAGES:
+        raise HTTPException(422, "Invalid stage.")
+    store.update_stage(url, normalized_stage)
     resp = _rows_response(request, {"view": view, "stage": stage_filter, "q": q, "sort": sort})
     resp.headers["HX-Trigger"] = "refreshStats"
     return resp
@@ -264,7 +267,7 @@ async def settings_profile(request: Request):
 def api_roles(request: Request):
     require_readable(request)
     keep = ("company", "role", "location", "salary", "deadline", "stage", "url",
-            "source", "date_found", "resume_variant", "exp_match")
+            "source", "date_found", "posted_date", "resume_variant", "exp_match")
     return JSONResponse([
         {**{k: r.get(k, "") for k in keep}, "score": r["_score"], "tier": r["_tier"]}
         for r in _query_roles(_view_params(request))])

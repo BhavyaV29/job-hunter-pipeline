@@ -1,13 +1,14 @@
 # /// script
-# requires-python = ">=3.9"
+# requires-python = ">=3.10"
 # dependencies = []
 # ///
 """
 One command for your daily job-search refresh.
 
 Usage:
-    python3 morning.py --force          # recommended (uses your conda env + Playwright)
-    uv run morning.py --force           # also works; auto-finds system python for fetch
+    python3 morning.py                  # recommended daily run
+    uv run morning.py                   # also works; auto-finds system python for fetch
+    python3 morning.py --force          # refresh paid sources despite source cooldown
 
 Prereqs (once):
     cp .env.example .env && set -a && source .env && set +a
@@ -96,7 +97,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--force", action="store_true",
-                    help="Bypass 20h cooldown for paid APIs (jsearch/adzuna/serpapi).")
+                    help="Bypass source cooldown for paid APIs; hard provider "
+                         "budgets and response caches still apply.")
     ap.add_argument("--top", type=int, default=0,
                     help="Print top N in terminal (0 = Sheet only, default).")
     ap.add_argument("--no-fetch", action="store_true",

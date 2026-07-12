@@ -12,6 +12,11 @@ tracker.csv.bak
 .fetch_state.json
 .jd_cache.json
 .linkcheck_cache.json
+.serpapi_budget.json
+.serpapi_cache.json
+.jsearch_budget.json
+.jsearch_cache.json
+.fetch_metrics.jsonl
 preferences.yaml
 # Browser-managed web settings (per-instance runtime state, never for git)
 web_settings.yaml

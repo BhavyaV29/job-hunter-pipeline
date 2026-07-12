@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.9"
+# requires-python = ">=3.10"
 # dependencies = ["gspread>=5.12", "google-auth>=2.29"]
 # ///
 """
@@ -33,11 +33,11 @@ TRACKER = Path(__file__).parent / "tracker.csv"
 TRACKER_BAK = Path(__file__).parent / "tracker.csv.bak"
 SHEET_TAB = "tracker"
 
-# Canonical schema (mirrors fetch_jobs.py FIELDS exactly).
+# Canonical 28-column schema (mirrors fetch_jobs.py FIELDS exactly).
 # stage and url sit right after score so the most actionable columns are
 # visible without horizontal scrolling.
 FIELDS: list[str] = [
-    "date_found", "company", "score", "stage", "url", "role", "location",
+    "date_found", "posted_date", "company", "score", "stage", "url", "role", "location",
     "salary", "deadline", "source", "applied_date", "contact_name",
     "contact_email", "job_id", "resume_variant", "referral_contact", "oa_date",
     "phone_date", "tech_date", "onsite_date", "offer_details", "next_action",
@@ -53,12 +53,12 @@ USER_FIELDS: frozenset[str] = frozenset({
 
 # CSV version wins for these fields during --sync (pipeline populates them)
 PIPELINE_FIELDS: frozenset[str] = frozenset({
-    "date_found", "company", "role", "location", "salary", "source", "deadline",
-    "score", "exp_years", "exp_match", "link_status",
+    "date_found", "posted_date", "company", "role", "location", "salary",
+    "source", "deadline", "score", "exp_years", "exp_match", "link_status",
 })
 
 STAGE_VALUES: list[str] = [
-    "sourced", "new", "applied", "not_applicable",
+    "sourced", "new", "shortlisted", "applied", "not_applicable",
     "oa", "phone_screen", "tech_screen", "onsite", "offer",
     "rejected", "withdrawn",
     # legacy aliases kept for existing Sheet rows
@@ -338,6 +338,7 @@ def _apply_formatting(spreadsheet, worksheet, fieldnames: list[str]) -> None:
         }
         for stage_values, bg_hex in [
             (["sourced", "new"],                          "#cfe2ff"),  # light blue
+            (["shortlisted"],                             "#e2d9f3"),  # light purple
             (["applied"],                                 "#fff3cd"),  # light yellow
             (["oa", "phone_screen", "tech_screen", "onsite",
               "phone", "tech"],                           "#ffd5a8"),  # light orange

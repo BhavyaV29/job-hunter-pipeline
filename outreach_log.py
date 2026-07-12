@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.9"
+# requires-python = ">=3.10"
 # dependencies = ["gspread>=5.12", "google-auth>=2.29"]
 # ///
 """

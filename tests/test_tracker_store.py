@@ -1,6 +1,8 @@
 """Store behaviour: read/sort/filter, stage updates, funnel stats, demo guard."""
 import csv
 
+import pytest
+
 import tracker_store as store
 
 
@@ -66,6 +68,17 @@ def test_update_stage_persists(tmp_path, monkeypatch):
     # header/schema preserved on write-back
     fieldnames, _ = store.read_rows(p)
     assert fieldnames == store.FIELDS
+
+
+def test_shortlisted_is_triage_and_invalid_stage_is_rejected(tmp_path, monkeypatch):
+    p = _seed(tmp_path)
+    monkeypatch.setenv("TRACKER_CSV", str(p))
+    monkeypatch.delenv("DEMO_MODE", raising=False)
+
+    assert store.update_stage("u1", "shortlisted") is True
+    assert any(r["url"] == "u1" for r in store.list_roles(triage_only=True))
+    with pytest.raises(store.InvalidStageError):
+        store.update_stage("u1", "invented-stage")
 
 
 def test_demo_is_read_only(tmp_path, monkeypatch):

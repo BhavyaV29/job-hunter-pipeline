@@ -3,7 +3,7 @@
 [![Live demo](https://img.shields.io/badge/live%20demo-online-brightgreen?logo=render&logoColor=white)](https://job-hunter-pipeline.onrender.com) [![Source](https://img.shields.io/badge/source-GitHub-181717?logo=github)](https://github.com/BhavyaV29/job-hunter-pipeline) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Automated job **sourcing, ranking & outreach**. It pulls fresh *technical* roles
-(SDE / Backend / ML / Applied-AI, India + remote) from ~15 sources into one ranked
+(SDE / Backend / ML / Applied-AI, India + remote) from 20+ source routes into one ranked
 tracker, so you start each day with a triaged shortlist instead of doom-scrolling
 job boards.
 
@@ -87,7 +87,7 @@ python3 morning.py --force           # fetch + score + Sheet sync + outreach dra
 3. **Fetch** new roles from all sources in parallel
 4. **Filter** to your profile (drops senior titles, high-YOE roles, spam, staffing noise)
 5. **Dedupe** same company + role + location across boards
-6. **Score** into tiers; dream companies + best fit float to the top
+6. **Score** for screen likelihood: freshness + eligibility + official apply URL + stack fit
 7. **Push** back to the Sheet, sorted best-first
 8. **Outreach** — contact lookup + cold-mail / referral drafts (skip with `--no-outreach`)
 
@@ -118,7 +118,8 @@ profile:
   # negative_keywords: { senior: -6, staff: -7 }                  # titles to avoid
   # location_boosts:   { bengaluru: 10, remote: 2 }               # your geography
   # remote_boost: 8
-  # dream_boost: 50
+  # dream_boost: 15
+  # official_apply_boost: 25
 ```
 
 | `seniority` | exp "good" ≤ | exp "warn" ≤ | senior titles | max YOE at fetch |
@@ -145,11 +146,15 @@ profile:
 | **LinkedIn** | JSearch (Google for Jobs) + LinkedIn guest endpoint | `RAPIDAPI_KEY` (guest: none) |
 | **Indeed / Glassdoor / ZipRecruiter** | JSearch (Google for Jobs) | `RAPIDAPI_KEY` |
 | **Naukri** | jobapi/v3 → RSS → Playwright intercept → JSearch → SerpApi | none (optional `NAUKRI_NKPARAM`) |
-| **Wellfound (AngelList)** | SerpApi `site:wellfound.com` search | `SERPAPI_KEY` |
-| **Hirist** | jobseeker JSON API | none |
+| **Wellfound (AngelList)** | Playwright Apollo data → budgeted SerpApi fallback | fallback: `SERPAPI_KEY` |
+| **Hirist** | jobseeker JSON API → Playwright → budgeted SerpApi fallback | none |
 | **Cutshort** | `__NEXT_DATA__` → Playwright → SerpApi | `SERPAPI_KEY` (fallback) |
 | **RemoteOK / Remotive / The Muse / Arbeitnow** | public APIs | none |
+| **Himalayas** | official API with structured country/timezone restrictions | none |
+| **Jobicy** | official APAC + worldwide remote API | none |
+| **HN Who's Hiring** | official monthly thread via Algolia | none |
 | **Adzuna** | search API (strong India coverage) | `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` |
+| **Google Jobs (alternate)** | SerpApi | disabled in default config; budgeted fallback only |
 | **Greenhouse / Lever / Ashby / Workable / Recruitee** | per-company ATS APIs (your `companies:` list) | none |
 
 **LinkedIn + Indeed (the important part):** the reliable backbone is **JSearch**
@@ -178,6 +183,12 @@ No key is ever hardcoded; a missing var prints a `~ <source>: … skipped` line.
 | `HUNTER_API_KEY` | Outreach contact lookup | <https://hunter.io/> |
 
 **JSearch is the single highest-value key** — it unlocks LinkedIn/Indeed coverage.
+
+Paid search is guarded provider-wide, not per logical source. By default SerpApi
+is capped at **2 real calls/run and 45/month** with a 72-hour response cache;
+JSearch is capped at **2/run and 120/month** with a 24-hour cache. Queries rotate
+across runs. A quota response opens one shared circuit immediately, and `--force`
+cannot bypass these limits. Override conservatively through `.env.example`.
 </details>
 
 <details>
@@ -208,17 +219,20 @@ Detection is conservative: a role is dropped only on a *clear* foreign lock.
 
 **Unknown salary is always kept.**
 
-**Ranking tiers (`score.py`)** — sorts by a dominant tier (large score gaps), then
-stack fit + remote boost within the tier:
+**Screen-likelihood ranking (`score.py`)** gives its highest weights to posting
+freshness, explicit experience fit, and an official employer/ATS application URL.
+Stack fit, a manually shortlisted stage, and target-company preference help next.
+Compensation tiers remain visible desirability signals, but no longer overpower
+the probability of earning a screen:
 
-| Tier | Meaning | Tier score |
+| Tier | Meaning | Desirability score |
 |---|---|---|
-| **T1** | India-eligible remote **and** ≥ 10 LPA | +1000 |
-| **T2** | India onsite **and** ≥ 10 LPA | +750 |
-| **T3** | India-eligible remote **and** 7–10 LPA | +500 |
-| **T4** | Unknown salary (benefit of the doubt) | +250 |
+| **T1** | India-eligible remote **and** ≥ 10 LPA | +25 |
+| **T2** | India onsite **and** ≥ 10 LPA | +20 |
+| **T3** | India-eligible remote **and** 7–10 LPA | +10 |
+| **T4** | Unknown salary (benefit of the doubt) | +0 |
 
-Dream companies (`dream_companies:` in `sources.yaml`) get **+50**. Shared geo/tier
+Dream companies (`dream_companies:` in `sources.yaml`) get a modest boost. Shared geo/tier
 logic lives in `geo.py` (used by both `fetch_jobs.py` and `score.py`).
 </details>
 

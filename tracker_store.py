@@ -19,23 +19,34 @@ ROOT = Path(__file__).resolve().parent
 
 # Only used to seed an empty tracker; reads always honour the file's real header.
 FIELDS = [
-    "date_found", "company", "score", "stage", "url", "role", "location",
+    "date_found", "posted_date", "company", "score", "stage", "url", "role", "location",
     "salary", "deadline", "source", "applied_date", "contact_name",
     "contact_email", "job_id", "resume_variant", "referral_contact", "oa_date",
     "phone_date", "tech_date", "onsite_date", "offer_details", "next_action",
     "next_action_date", "notes", "exp_years", "exp_match",
 ]
-ACTIVE_STAGES = ("sourced", "new")
+ACTIVE_STAGES = ("sourced", "new", "shortlisted")
 FUNNEL_STAGES = (
-    "sourced", "applied", "oa", "phone", "tech", "onsite", "offer",
+    "sourced", "shortlisted", "applied", "oa", "phone", "tech", "onsite", "offer",
     "rejected", "withdrawn", "not_applicable",
 )
+VALID_STAGES = frozenset({
+    *FUNNEL_STAGES,
+    "new",
+    "phone_screen",
+    "tech_screen",
+    "closed",
+})
 
 _write_lock = threading.Lock()
 
 
 class ReadOnlyError(RuntimeError):
     """Raised when a write is attempted against the demo (read-only) tracker."""
+
+
+class InvalidStageError(ValueError):
+    """Raised when a web/API write requests an unsupported funnel stage."""
 
 
 def _flag(name: str) -> bool:
@@ -160,6 +171,11 @@ def update_stage(url: str, new_stage: str, *, extra: dict | None = None) -> bool
     """
     if is_demo():
         raise ReadOnlyError("tracker is read-only in demo mode")
+    new_stage = (new_stage or "").strip().lower()
+    if new_stage not in VALID_STAGES:
+        raise InvalidStageError(
+            f"invalid stage {new_stage!r}; valid stages: {', '.join(sorted(VALID_STAGES))}"
+        )
     url = (url or "").strip()
     if not url:
         return False

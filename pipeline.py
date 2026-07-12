@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.9"
+# requires-python = ">=3.10"
 # dependencies = []
 # ///
 """
@@ -32,11 +32,11 @@ from pathlib import Path
 TRACKER = Path(__file__).parent / "tracker.csv"
 
 STAGES = [
-    "sourced", "applied", "oa", "phone_screen", "tech_screen",
+    "sourced", "shortlisted", "applied", "oa", "phone_screen", "tech_screen",
     "onsite", "offer", "rejected", "withdrawn", "not_applicable",
 ]
 TERMINAL = {"rejected", "withdrawn", "offer", "not_applicable"}
-DAILY_TARGET = 20  # applications/day
+DAILY_TARGET = 6  # qualified applications/day
 
 # Tabulate is optional - gracefully fall back to manual formatting.
 try:
@@ -89,7 +89,7 @@ def _save_rows(rows: list[dict], fieldnames: list[str]) -> None:
 
 # Only roles still in the triage queue get flipped to 'applied'. A role that has
 # already advanced (applied/oa/.../offer/rejected/withdrawn) is NOT regressed.
-_FLIPPABLE_STAGES = {"sourced", "new", ""}
+_FLIPPABLE_STAGES = {"sourced", "new", "shortlisted", ""}
 
 
 def _read_url_file(path: str) -> list[str]:
@@ -117,8 +117,11 @@ def _top_sourced_urls(rows: list[dict], n: int):
     min_inr, remote_floor_inr = score.load_thresholds(
         Path(__file__).parent / "sources.yaml"
     )
-    sourced = [r for r in rows
-               if (r.get("stage") or "").strip().lower() in ("sourced", "new")]
+    sourced = [
+        r for r in rows
+        if (r.get("stage") or "").strip().lower()
+        in ("sourced", "new", "shortlisted")
+    ]
     ranked = sorted(sourced,
                     key=lambda r: score.total_score(r, min_inr, remote_floor_inr),
                     reverse=True)
@@ -338,6 +341,42 @@ def print_weekly_pace(rows: list[dict]) -> None:
     print(_tabulate_rows(["Date", "Apps", ""], table_rows))
 
 
+def funnel_consistency_issues(rows: list[dict]) -> dict[str, int]:
+    """Return aggregate tracker inconsistencies without guessing missing dates."""
+    advanced = {
+        "applied", "oa", "phone_screen", "tech_screen", "onsite",
+        "offer", "rejected", "withdrawn",
+    }
+    issues = {
+        "advanced_missing_applied_date": 0,
+        "pre_application_with_applied_date": 0,
+        "invalid_applied_date": 0,
+    }
+    for row in rows:
+        stage = (row.get("stage") or "").strip().lower()
+        applied_date = (row.get("applied_date") or "").strip()
+        if stage in advanced and not applied_date:
+            issues["advanced_missing_applied_date"] += 1
+        if stage in {"sourced", "new", "shortlisted"} and applied_date:
+            issues["pre_application_with_applied_date"] += 1
+        if applied_date:
+            try:
+                dt.date.fromisoformat(applied_date)
+            except ValueError:
+                issues["invalid_applied_date"] += 1
+    return {name: count for name, count in issues.items() if count}
+
+
+def print_funnel_warnings(rows: list[dict]) -> None:
+    issues = funnel_consistency_issues(rows)
+    if not issues:
+        return
+    rendered = ", ".join(name.replace("_", " ") + f": {count}"
+                         for name, count in issues.items())
+    print(f"\n  TRACKER DATA WARNING — {rendered}.")
+    print("  Correct these in the Sheet; dates are never invented automatically.")
+
+
 def _pull_from_sheets() -> None:
     """Pull latest tracker data from Google Sheets before the dashboard.
 
@@ -404,6 +443,7 @@ def main() -> None:
         sys.exit(0)
 
     warn_days = _load_expiry_warn_days()
+    print_funnel_warnings(rows)
     if args.closing:
         print_closing_soon(rows, warn_days)
     elif args.funnel:

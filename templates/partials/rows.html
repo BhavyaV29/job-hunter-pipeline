@@ -40,7 +40,7 @@
               hx-target="#rows" hx-swap="innerHTML" hx-trigger="change"
               {{ 'disabled' if (cfg.demo or not admin_ok) }}
               class="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-neutral-500 disabled:text-neutral-500 disabled:cursor-not-allowed">
-        {% for s in ['sourced','new','applied','oa','phone','tech','onsite','offer','rejected','withdrawn','not_applicable'] %}
+        {% for s in ['sourced','new','shortlisted','applied','oa','phone','tech','onsite','offer','rejected','withdrawn','not_applicable'] %}
           <option value="{{ s }}" {{ 'selected' if (r.stage or '')|lower == s }}>{{ s }}</option>
         {% endfor %}
       </select>
