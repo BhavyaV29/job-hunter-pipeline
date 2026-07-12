@@ -4,11 +4,12 @@ A triage dashboard (HTMX + Tailwind), a visual Settings page (enter API keys,
 connect a Sheet, set your profile — no file editing), a JSON API, a "Run refresh"
 button and an optional daily scheduler that call the same morning.py a human
 would. A fresh instance comes up live and self-configures an ADMIN_TOKEN (printed
-on startup) that gates writes; open the dashboard with ?token=... to configure.
-Set DEMO_MODE=1 to serve the read-only sample (the public showcase). Each user
-runs their own instance — no shared server holds anyone's secrets.
+on startup) that gates private data/config reads and all writes; open the
+dashboard with ?token=... once to establish the admin cookie. Set DEMO_MODE=1 to
+serve the public, read-only sample showcase. Each user runs their own instance —
+no shared server holds anyone's secrets.
 
-    pip install -r requirements-web.txt && uvicorn server:app --reload
+    uv sync --locked --extra web && uv run --locked --extra web uvicorn server:app --reload
 """
 from __future__ import annotations
 
@@ -54,13 +55,19 @@ def _admin_token() -> str:
 
 
 def admin_ok(request: Request) -> bool:
-    """True when writes/run are allowed: no token configured, or it matches."""
+    """True only when the request presents the configured admin token."""
     tok = _admin_token()
     if not tok:
-        return True
+        return False
     got = (request.headers.get("X-Admin-Token", "") or request.query_params.get("token", "")
            or request.cookies.get("admin_token", "")).strip()
     return got == tok
+
+
+def require_readable(request: Request) -> None:
+    """Keep sample reads public, but fail closed for every live-instance read."""
+    if not store.is_demo() and not admin_ok(request):
+        raise HTTPException(401, "Admin token required.")
 
 
 def require_writable(request: Request) -> None:
@@ -151,6 +158,7 @@ def _rows_response(request: Request, p: dict) -> HTMLResponse:
 # --- pages + partials --------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
+    require_readable(request)
     p = _view_params(request)
     resp = templates.TemplateResponse(request, "dashboard.html", {
         "roles": _query_roles(p), "stats": store.stats(),
@@ -161,11 +169,13 @@ def dashboard(request: Request):
 
 @app.get("/roles", response_class=HTMLResponse)
 def roles_partial(request: Request):
+    require_readable(request)
     return _rows_response(request, _view_params(request))
 
 
 @app.get("/stats", response_class=HTMLResponse)
 def stats_partial(request: Request):
+    require_readable(request)
     return templates.TemplateResponse(request, "partials/stats.html",
                                       {"stats": store.stats()})
 
@@ -191,6 +201,7 @@ def run(request: Request, force: bool = Form(True), no_outreach: bool = Form(Fal
 
 @app.get("/setup", response_class=HTMLResponse)
 def setup(request: Request):
+    require_readable(request)
     resp = templates.TemplateResponse(request, "setup.html", {
         "cfg": config_status(), "admin_ok": admin_ok(request)})
     return _apply_token_cookie(request, resp)
@@ -199,6 +210,7 @@ def setup(request: Request):
 # --- visual settings ---------------------------------------------------------
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request):
+    require_readable(request)
     resp = templates.TemplateResponse(request, "settings.html", {
         "cfg": config_status(), "profile": profile_config.load_profile(),
         "demo": store.is_demo(), "admin_ok": admin_ok(request),
@@ -250,6 +262,7 @@ async def settings_profile(request: Request):
 # --- JSON API ----------------------------------------------------------------
 @app.get("/api/roles")
 def api_roles(request: Request):
+    require_readable(request)
     keep = ("company", "role", "location", "salary", "deadline", "stage", "url",
             "source", "date_found", "resume_variant", "exp_match")
     return JSONResponse([
@@ -258,12 +271,14 @@ def api_roles(request: Request):
 
 
 @app.get("/api/stats")
-def api_stats():
+def api_stats(request: Request):
+    require_readable(request)
     return JSONResponse(store.stats())
 
 
 @app.get("/api/run/status")
-def api_run_status():
+def api_run_status(request: Request):
+    require_readable(request)
     return JSONResponse({k: v for k, v in _run_state.items() if k != "log"})
 
 

@@ -36,29 +36,37 @@ A self-hostable FastAPI + HTMX dashboard over the same `tracker.csv`. You add AP
 keys, connect a Sheet, and set your profile from a visual **Settings** page.
 
 ```bash
-pip install -r requirements-web.txt
-uvicorn server:app --reload          # http://localhost:8000
+uv sync --locked --extra web
+uv run --locked --extra web uvicorn server:app --reload  # http://localhost:8000
 # or:  docker compose up --build
 ```
 
 Then:
 
-1. **Open the URL.** A fresh instance comes up *live* and prints a one-time
-   `?token=…` link in the startup logs — that token gates writes (your admin key).
+1. **Open the URL.** A fresh local/Compose/Fly instance comes up *live* and prints a
+   `?token=…` link in the startup logs. In live mode that token gates the
+   dashboard, tracker/stats/run APIs, setup/settings metadata, and all writes.
+   `/healthz` stays public for hosting probes.
 2. **Open that link → Settings** → paste your API keys, optionally connect a Google
    Sheet, and set your profile.
 3. **Hit "Run refresh".** Roles fill the dashboard; filter/sort and change stages inline.
 
 Everyone runs their **own** instance with their **own** keys — no shared server
-holds anyone's secrets. One-click blueprints for **Render** and **Fly.io** plus a
-`Dockerfile` / `docker-compose.yml` are included — see **[DEPLOY.md](DEPLOY.md)**.
+holds anyone's secrets. **Docker Compose** and **Fly.io** mount durable storage.
+The included free **Render** blueprint is deliberately a safe read-only demo:
+Render's free filesystem is ephemeral, and Docker's `VOLUME` line does not create
+a Render disk. For a private Render instance, explicitly switch `DEMO_MODE=0` and
+use Render environment secrets + a Google Sheet, or add a paid persistent disk;
+browser-saved settings and local `tracker.csv` otherwise reset on restart/redeploy.
+See **[DEPLOY.md](DEPLOY.md)** for the no-surprise persistence options.
 
 **Daily auto-refresh:** a bundled GitHub Actions workflow
 (`.github/workflows/refresh.yml`) wakes your deployed instance and triggers one
-pipeline run per day (02:30 UTC / 08:00 IST) — handy when the host sleeps while idle
-(e.g. Render's free tier), where an in-process timer can't fire. Opt in with the
-`APP_URL`, `ADMIN_TOKEN`, and `ENABLE_DAILY_REFRESH` repo variables (see the workflow
-header); it simply automates the dashboard's **Run refresh** button.
+pipeline run per day (02:30 UTC / 08:00 IST) — handy when the host sleeps while idle,
+where an in-process timer can't fire. Opt in with the `APP_URL`, `ADMIN_TOKEN`, and
+`ENABLE_DAILY_REFRESH` repo variables (see the workflow header); it simply automates
+the dashboard's **Run refresh** button. On free Render, use a Google Sheet as the
+durable tracker because the local filesystem can be replaced.
 
 > Public showcase? Set `DEMO_MODE=1` to serve read-only sample data — that's exactly
 > what the [live demo](https://job-hunter-pipeline.onrender.com) runs.
@@ -319,7 +327,7 @@ and you need those to actually apply and network.
 ### Tests
 
 ```bash
-python3 -m pytest tests/ -q
+uv run --locked --extra web --extra dev pytest -q
 ```
 
 ---

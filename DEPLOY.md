@@ -5,11 +5,14 @@ This is a **deploy-your-own** tool: everyone runs their *own* copy with their
 secrets, and job-board fetches run from *your* infra — the same safety model as
 the CLI.
 
-A deploy comes up **live** and, if you didn't set an `ADMIN_TOKEN`, generates one
-and prints a `?token=…` link in the startup logs. Open that link → **Settings** →
-paste your API keys, connect a Google Sheet and set your profile — **all in the
-browser, no file editing**. (Want a public read-only showcase instead? Set
-`DEMO_MODE=1` — it serves `tracker.sample.csv` and blocks writes.)
+A live deploy that has durable `/data` can be configured in the browser: if you
+didn't set an `ADMIN_TOKEN`, it generates one and prints a `?token=…` link in the
+startup logs. That link establishes the cookie required for every private
+dashboard/data/config read and all writes. (A public `DEMO_MODE=1` showcase serves
+`tracker.sample.csv` publicly and blocks writes.)
+
+Storage is host-specific. Docker's `VOLUME ["/data"]` declaration is only metadata;
+it does not provision a disk on Render or any other platform.
 
 ## Option A — Docker Compose (local or any VPS)
 
@@ -26,12 +29,24 @@ prefer — copy `.env.example` → `.env` first.)
 
 1. Fork this repo.
 2. Render → **New → Blueprint** → pick your fork (`render.yaml` is detected).
-3. It comes up **live** with a generated `ADMIN_TOKEN` (see it under the service's
-   **Environment** tab). Open `https://YOUR-APP.onrender.com/?token=THAT_TOKEN` →
-   **Settings** and add your keys/Sheet/profile.
+3. The free blueprint comes up in safe, public **demo mode** (`DEMO_MODE=1`) and
+   creates no paid resources.
 
-> Free plan sleeps when idle, so `ENABLE_SCHEDULER` isn't reliable there — use a
-> paid instance, or hit `POST /run` from an external cron (e.g. GitHub Actions).
+To use it as a private live instance, explicitly set `DEMO_MODE=0`, keep the
+generated `ADMIN_TOKEN` secret, and choose a persistence model:
+
+- **No-cost Render:** treat the filesystem as disposable. Put API keys in Render
+  environment secrets (and credentials in a secret file), use a Google Sheet as
+  the durable tracker, and keep profile tuning in your fork. Browser-saved
+  settings and local `tracker.csv` can disappear after restart/redeploy.
+- **Persistent Render:** manually add a **paid** persistent disk mounted at
+  `/data`. Render charges for this; the blueprint intentionally does not add it.
+- **No Render disk:** use Docker Compose or Fly.io below, both with an explicit
+  volume.
+
+The free plan also sleeps when idle, so `ENABLE_SCHEDULER` is not reliable there;
+use the authenticated GitHub Actions ping described below. A Google Sheet is still
+needed if the tracker must survive filesystem replacement.
 
 ## Option C — Fly.io
 
@@ -46,12 +61,21 @@ Then open `https://YOUR-APP.fly.dev/?token=YOUR_TOKEN` → **Settings**. For the
 daily scheduler on Fly, set `ENABLE_SCHEDULER=1`, `RUN_HOUR`, `TZ`, and keep a
 machine warm (`min_machines_running = 1`).
 
+## Persistence at a glance
+
+- **Docker Compose:** the `jobdata` named volume persists `/data`.
+- **Fly.io:** the explicitly created `jobdata` volume persists `/data`.
+- **Render free:** ephemeral filesystem; the Docker `VOLUME` does not change that.
+- **Render paid disk:** durable only after you add and mount a paid disk at `/data`.
+- **Google Sheets:** host-independent durable tracker; use environment secrets or
+  a durable disk for configuration/credentials.
+
 ## Configuration
 
 | Env var | Default | Purpose |
 |---|---|---|
 | `DEMO_MODE` | `0` (image) | `0` = live (your tracker); `1` = read-only sample showcase |
-| `ADMIN_TOKEN` | _auto-generated_ | Gates writes + "Run refresh" via `?token=` / `X-Admin-Token`. Unset → generated on first boot and printed in the logs (persisted on the data volume) |
+| `ADMIN_TOKEN` | _auto-generated_ | In live mode, gates dashboard/data/config reads and all writes via `?token=` / `X-Admin-Token`. Unset → generated on first boot and printed in logs; persistence follows `/data` unless supplied by the host environment |
 | `TRACKER_CSV` | `/data/tracker.csv` | Where the live tracker is stored (mount a volume) |
 | `ENABLE_SCHEDULER` | _(off)_ | `1` runs the pipeline daily (ignored in demo) |
 | `RUN_HOUR` / `RUN_MINUTE` | `8` / `0` | Daily refresh time |
@@ -59,11 +83,11 @@ machine warm (`min_machines_running = 1`).
 | `NAUKRI_SKIP_PLAYWRIGHT` | `1` (image) | Skip the headless-browser Naukri route (keeps the image light) |
 
 Every pipeline key (`RAPIDAPI_KEY`, `ADZUNA_*`, `SERPAPI_KEY`, `HUNTER_API_KEY`,
-`GEMINI/OPENAI/ANTHROPIC`, `GOOGLE_SHEETS_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON`) is
-best set from the in-app **Settings** page — but you can still pre-set any of them
-as env vars/secrets if you prefer. All optional; each source skips gracefully if
-its key is missing. Keys saved in the browser live in a `managed.env` on the data
-volume (never committed).
+`GEMINI/OPENAI/ANTHROPIC`, `GOOGLE_SHEETS_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON`) can
+be set from the in-app **Settings** page when `/data` is durable, or pre-set as
+host environment secrets/secret files. All are optional; each source skips
+gracefully if its key is missing. Browser saves go to `managed.env` under `/data`
+(never committed), so they are not persistent on free Render.
 
 ## Tune it to *you*
 
@@ -106,10 +130,11 @@ POSTs `/run`. In your fork → **Settings**:
 
 | Path | What |
 |---|---|
-| `GET /` | Triage dashboard |
-| `GET /settings` | Visual config — keys, Google Sheet, profile (writable instances) |
-| `GET /setup` | Config status + onboarding checklist |
-| `GET /api/roles`, `GET /api/stats` | JSON |
+| `GET /` | Triage dashboard (public in demo; admin token required live) |
+| `GET /settings` | Visual config — public read-only demo; admin token required live |
+| `GET /setup` | Config status — public in demo; admin token required live |
+| `GET /roles`, `GET /stats` | Dashboard fragments — public in demo; admin token required live |
+| `GET /api/roles`, `GET /api/stats`, `GET /api/run/status` | JSON — public in demo; admin token required live |
 | `POST /run` | Trigger a pipeline refresh (writable instances only) |
-| `GET /healthz` | Liveness probe |
+| `GET /healthz` | Public liveness probe |
 | `GET /api/docs` | OpenAPI docs |

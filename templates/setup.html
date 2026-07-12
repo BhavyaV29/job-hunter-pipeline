@@ -40,7 +40,7 @@
       <div class="px-4 py-3 flex items-center gap-3">
         <span class="text-sm text-neutral-400 w-52">Admin token</span>
         <span class="text-sm {{ 'text-emerald-400' if cfg.admin_protected else 'text-neutral-500' }}">
-          {{ 'set (writes/run require ?token=, printed in startup logs)' if cfg.admin_protected else 'not set' }}
+          {{ 'set (all live data/config reads and writes require it)' if cfg.admin_protected else 'not set' }}
         </span>
       </div>
       <div class="px-4 py-3 flex items-center gap-3">
@@ -67,16 +67,16 @@
       <h2 class="text-lg font-semibold">Turnkey setup — no file editing</h2>
       <ol class="list-decimal list-inside space-y-2 text-sm text-neutral-300">
         <li>Deploy the container (one-click on Render/Fly — see <code class="text-neutral-400">DEPLOY.md</code>) or run locally:
-          <pre class="mt-1 bg-neutral-900 border border-neutral-800 rounded p-3 text-xs overflow-x-auto">pip install -r requirements-web.txt
-uvicorn server:app --reload</pre>
+          <pre class="mt-1 bg-neutral-900 border border-neutral-800 rounded p-3 text-xs overflow-x-auto">uv sync --locked --extra web
+uv run --locked --extra web uvicorn server:app --reload</pre>
         </li>
-        <li>It comes up <b>live</b> and prints a one-time link with your admin token in the startup logs:
+        <li>A local/Compose/Fly instance comes up <b>live</b> and prints a link with your admin token in the startup logs:
           <pre class="mt-1 bg-neutral-900 border border-neutral-800 rounded p-3 text-xs overflow-x-auto">open http://localhost:8000/?token=…</pre>
           (or set your own <code class="text-neutral-400">ADMIN_TOKEN</code> before starting).</li>
         <li>Open that link, go to <a class="underline" href="/settings">settings</a>, and add your API keys, connect a Google Sheet
           and pick your profile — all in the browser.</li>
         <li>Hit <b>Run refresh</b> on the dashboard. Optionally set <code class="text-neutral-400">ENABLE_SCHEDULER=1</code> for a daily auto-run.</li>
-        <li>Hosting a public showcase for others? Deploy a second copy with <code class="text-neutral-400">DEMO_MODE=1</code> — it serves read-only sample data.</li>
+        <li>The free Render blueprint starts safely with <code class="text-neutral-400">DEMO_MODE=1</code>. Its filesystem is ephemeral; read <code class="text-neutral-400">DEPLOY.md</code> before switching it live.</li>
       </ol>
     </section>
   </main>

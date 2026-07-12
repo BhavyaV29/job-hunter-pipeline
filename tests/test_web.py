@@ -12,11 +12,27 @@ import server  # noqa: E402
 
 client = TestClient(server.app)
 
+PUBLIC_DEMO_READS = (
+    "/",
+    "/roles?view=all",
+    "/stats",
+    "/setup",
+    "/settings",
+    "/api/roles?view=all",
+    "/api/stats",
+    "/api/run/status",
+)
+
 
 def test_healthz():
     r = client.get("/healthz")
     assert r.status_code == 200
     assert r.json()["demo"] is True
+
+
+@pytest.mark.parametrize("path", PUBLIC_DEMO_READS)
+def test_demo_reads_stay_public(path):
+    assert client.get(path).status_code == 200
 
 
 def test_dashboard_renders():

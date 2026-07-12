@@ -1,9 +1,9 @@
 """Browser-managed config for a self-hosted instance.
 
 API keys go to a managed env file loaded into ``os.environ``; the search profile
-goes to an overlay merged over ``sources.yaml``. Both live on the data volume so
-they survive restarts and are never committed. This is what lets a deployed user
-configure everything from the UI without touching files.
+goes to an overlay merged over ``sources.yaml``. Both live under the tracker data
+directory and are never committed. They survive restarts only when the host mounts
+durable storage there (Docker's VOLUME declaration alone does not provide it).
 """
 from __future__ import annotations
 

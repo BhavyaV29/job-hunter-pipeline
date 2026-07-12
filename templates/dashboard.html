@@ -14,8 +14,7 @@
     :focus-visible { outline: 1px solid #737373; outline-offset: 1px; }
   </style>
 </head>
-<body class="bg-neutral-950 text-neutral-100 min-h-screen"
-      {% if request.query_params.get('token') %}hx-headers='{"X-Admin-Token": "{{ request.query_params.get("token") }}"}'{% endif %}>
+<body class="bg-neutral-950 text-neutral-100 min-h-screen">
 
   <header class="border-b border-neutral-800 sticky top-0 bg-neutral-950/90 backdrop-blur z-10">
     <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2">

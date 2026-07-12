@@ -2,7 +2,7 @@
 name = "jobsearch"
 version = "0.2.0"
 description = "Personal job sourcing and outreach pipeline"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.27",
     "requests>=2.31",

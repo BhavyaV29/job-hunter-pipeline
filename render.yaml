@@ -1,11 +1,14 @@
-# Render blueprint — deploy your own instance in a couple of clicks.
-# New → Blueprint → point at your fork. Comes up LIVE with a generated ADMIN_TOKEN
-# (see it under the service's Environment tab). Open /?token=... → Settings to add
-# your keys/Sheet/profile in the browser. For a public read-only showcase instead,
-# set DEMO_MODE to "1".
+# Render blueprint — a safe-by-default, read-only public demo on Render's free
+# plan. To run a private live tracker, explicitly set DEMO_MODE=0 and use the
+# generated ADMIN_TOKEN.
 #
-# Note: the free plan sleeps when idle, so ENABLE_SCHEDULER isn't reliable there
-# (use a paid plan or an external cron hitting POST /run for daily refreshes).
+# Render's free filesystem is ephemeral. Docker's VOLUME declaration does not
+# provision a Render disk, so browser-saved settings and tracker.csv can disappear
+# after a restart/redeploy. Keep secrets in Render environment variables and the
+# tracker in Google Sheets, use Docker Compose/Fly with a volume, or manually add a
+# paid Render persistent disk at /data. This blueprint intentionally creates no
+# paid resources. The free plan also sleeps, so use an external authenticated cron
+# instead of ENABLE_SCHEDULER if you opt into live mode.
 services:
   - type: web
     name: job-hunter-pipeline
@@ -14,7 +17,7 @@ services:
     healthCheckPath: /healthz
     envVars:
       - key: DEMO_MODE
-        value: "0"
+        value: "1"
       - key: NAUKRI_SKIP_PLAYWRIGHT
         value: "1"
       - key: ADMIN_TOKEN

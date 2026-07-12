@@ -8,16 +8,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Declared syntax floor plus the Python used by the container image.
+        python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-web.txt pytest
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --extra web --extra dev
       - name: Run tests
-        run: pytest -q
+        run: uv run --locked --extra web --extra dev pytest -q
       - name: Import smoke (app boots)
-        run: python -c "import server, tracker_store, profile_config; print('ok')"
+        run: uv run --locked --extra web python -c "import server, tracker_store, profile_config; print('ok')"

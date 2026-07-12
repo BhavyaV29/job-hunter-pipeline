@@ -1,23 +1,30 @@
 # Lightweight web image for the job-hunter dashboard + pipeline.
 # Comes up LIVE and auto-generates an ADMIN_TOKEN (printed on startup) that gates
-# writes; add your keys, Sheet and profile in the browser at /settings — no file
-# editing. Set DEMO_MODE=1 to run the read-only public showcase instead.
+# private reads and writes; add your keys, Sheet and profile in the browser at
+# /settings. Set DEMO_MODE=1 to run the read-only public showcase instead.
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DEMO_MODE=0 \
     NAUKRI_SKIP_PLAYWRIGHT=1 \
-    TRACKER_CSV=/data/tracker.csv
+    TRACKER_CSV=/data/tracker.csv \
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
-COPY requirements-web.txt .
-RUN pip install --no-cache-dir -r requirements-web.txt
+RUN pip install --no-cache-dir uv
+COPY pyproject.toml uv.lock ./
+# Install exactly the lockfile's core + web dependencies. The Playwright extra is
+# deliberately not selected, keeping the image small and matching
+# NAUKRI_SKIP_PLAYWRIGHT=1.
+RUN uv sync --locked --no-install-project --extra web
 
 COPY . .
 
-# Persist the tracker outside the image layer (mount a volume at /data).
+# This only declares the mount point; it does not provision durable storage.
+# Docker Compose and Fly mount /data explicitly. Render needs a separately
+# configured paid persistent disk; its free filesystem remains ephemeral.
 RUN mkdir -p /data
 VOLUME ["/data"]
 

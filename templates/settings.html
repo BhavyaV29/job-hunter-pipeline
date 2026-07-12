@@ -190,7 +190,8 @@
 
     <p class="text-xs text-neutral-600">
       Advanced tuning — target companies, source list and hard filters — still lives in
-      <code class="text-neutral-400">sources.yaml</code>. Everything above is stored on your instance's data volume and survives restarts.
+      <code class="text-neutral-400">sources.yaml</code>. Browser saves live under the tracker data directory
+      and survive only when that path is backed by durable storage; Render's free filesystem is ephemeral.
     </p>
   </main>
 </body>
