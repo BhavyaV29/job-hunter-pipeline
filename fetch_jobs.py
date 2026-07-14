@@ -649,7 +649,9 @@ def fetch_weworkremotely(cfg: dict):
             root = ET.fromstring(r.content)
         except Exception:
             continue
-        channel = root.find("channel") or root
+        channel = root.find("channel")
+        if channel is None:
+            channel = root
         for item in channel.findall("item"):
             title_raw = (item.findtext("title") or "").strip()
             link = (item.findtext("link") or "").strip()
@@ -2134,19 +2136,6 @@ def _process_fetched_job(
         outcome(fresher_reason)
         return None
 
-    llm_en = None
-    if llm_enabled() and (desc or title):
-        llm_en = enrich_job(
-            company=company_name or "Unknown",
-            title=title,
-            description=desc,
-            url=url,
-        )
-        if not llm_en.get("keep", True):
-            drop_stats["llm_skip"] += 1
-            outcome("llm_skip")
-            return None
-
     j_norm = dict(j)
     j_norm["title"] = title
     j_norm["company"] = company_name
@@ -2168,6 +2157,21 @@ def _process_fetched_job(
                 return None
         except ValueError:
             pass
+
+    # Optional LLM work is deliberately last: never spend quota on jobs that
+    # deterministic geo, salary, experience, or expiry rules already reject.
+    llm_en = None
+    if llm_enabled() and (desc or title):
+        llm_en = enrich_job(
+            company=company_name or "Unknown",
+            title=title,
+            description=desc,
+            url=url,
+        )
+        if not llm_en.get("keep", True):
+            drop_stats["llm_skip"] += 1
+            outcome("llm_skip")
+            return None
 
     seen.add(canon)
     seen_keys.add(key)

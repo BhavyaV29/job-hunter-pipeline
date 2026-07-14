@@ -12,6 +12,10 @@ _last_call_mono = 0.0
 _throttle_lock = threading.Lock()
 
 
+class LLMRateLimitError(requests.HTTPError):
+    """Raised after the configured 429 attempts are exhausted."""
+
+
 def _min_interval_sec() -> float:
     """Seconds between LLM API calls (default ~9 RPM for Gemini free tier)."""
     raw = os.environ.get("LLM_MIN_INTERVAL_SEC", "6.5").strip()
@@ -22,11 +26,29 @@ def _min_interval_sec() -> float:
 
 
 def _max_retries() -> int:
-    raw = os.environ.get("LLM_MAX_RETRIES", "5").strip()
+    raw = os.environ.get("LLM_MAX_RETRIES", "2").strip()
     try:
         return max(1, int(raw))
     except ValueError:
-        return 5
+        return 2
+
+
+def _max_retry_delay_sec() -> float:
+    raw = os.environ.get("LLM_MAX_RETRY_DELAY_SEC", "30").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 30.0
+
+
+def _retry_delay(response: requests.Response, attempt: int) -> float:
+    """Return a bounded Retry-After or exponential delay."""
+    retry_after = response.headers.get("Retry-After")
+    try:
+        requested = float(retry_after) if retry_after else 5.0 * (2 ** attempt)
+    except (TypeError, ValueError):
+        requested = 5.0 * (2 ** attempt)
+    return min(_max_retry_delay_sec(), max(0.0, requested))
 
 
 def _throttle() -> None:
@@ -52,35 +74,28 @@ def post_json(
     *,
     headers: dict[str, str] | None = None,
     body: dict[str, Any] | None = None,
-    timeout: int = 45,
+    timeout: int = 20,
 ) -> dict:
     """POST JSON with throttle + 429 backoff. Raises requests.HTTPError on failure."""
-    last_exc: Exception | None = None
-    for attempt in range(_max_retries()):
+    attempts = _max_retries()
+    for attempt in range(attempts):
         _throttle()
-        try:
-            r = requests.post(
-                url,
-                headers=headers or {"Content-Type": "application/json"},
-                json=body,
-                timeout=timeout,
+        r = requests.post(
+            url,
+            headers=headers or {"Content-Type": "application/json"},
+            json=body,
+            timeout=timeout,
+        )
+        if r.status_code == 429:
+            error = LLMRateLimitError(
+                f"429 Too Many Requests (attempt {attempt + 1}/{attempts})",
+                response=r,
             )
-            if r.status_code == 429:
-                retry_after = r.headers.get("Retry-After")
-                wait = float(retry_after) if retry_after else min(90.0, 5.0 * (2 ** attempt))
-                time.sleep(wait)
-                last_exc = requests.HTTPError(
-                    f"429 Too Many Requests (retry {attempt + 1}/{_max_retries()})",
-                    response=r,
-                )
-                continue
-            r.raise_for_status()
-            return r.json()
-        except requests.HTTPError as e:
-            if e.response is not None and e.response.status_code == 429:
-                last_exc = e
-                continue
-            raise
-    if last_exc:
-        raise last_exc
+            if attempt == attempts - 1:
+                # Never sleep after the final failed attempt.
+                raise error
+            time.sleep(_retry_delay(r, attempt))
+            continue
+        r.raise_for_status()
+        return r.json()
     raise requests.HTTPError("LLM request failed after retries")

@@ -187,6 +187,11 @@ No key is ever hardcoded; a missing var prints a `~ <source>: … skipped` line.
 
 **JSearch is the single highest-value key** — it unlocks LinkedIn/Indeed coverage.
 
+LLM JD parsing is optional and bounded: successful results are cached, deterministic
+filters run first, and the default eight-call budget plus provider circuit breaker
+prevents rate limits from stalling a fetch. Set `LLM_JD_DISABLE=1` to disable it or
+adjust `LLM_MAX_CALLS_PER_RUN` for a different budget.
+
 Paid search is guarded provider-wide, not per logical source. By default SerpApi
 is capped at **2 real calls/run and 45/month** with a 72-hour response cache;
 JSearch is capped at **2/run and 120/month** with a 24-hour cache. Queries rotate

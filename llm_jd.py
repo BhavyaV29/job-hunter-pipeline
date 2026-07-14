@@ -11,6 +11,10 @@ import re
 from pathlib import Path
 
 _CACHE_NAME = ".jd_cache.json"
+_CACHE_BY_PATH: dict[Path, dict] = {}
+_LLM_CALLS_THIS_RUN = 0
+_LLM_CONSECUTIVE_FAILURES = 0
+_LLM_BLOCKED_REASON = ""
 
 
 def _cache_path(base: Path | None = None) -> Path:
@@ -20,16 +24,24 @@ def _cache_path(base: Path | None = None) -> Path:
 
 def _load_cache(base: Path | None = None) -> dict:
     path = _cache_path(base)
+    if path in _CACHE_BY_PATH:
+        return _CACHE_BY_PATH[path]
     if not path.exists():
-        return {}
+        cache: dict = {}
+        _CACHE_BY_PATH[path] = cache
+        return cache
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        cache = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return {}
+        cache = {}
+    _CACHE_BY_PATH[path] = cache
+    return cache
 
 
 def _save_cache(cache: dict, base: Path | None = None) -> None:
-    _cache_path(base).write_text(json.dumps(cache, indent=2), encoding="utf-8")
+    path = _cache_path(base)
+    _CACHE_BY_PATH[path] = cache
+    path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
 
 
 def _llm_config() -> tuple[str, str, str] | None:
@@ -63,6 +75,63 @@ def _llm_config() -> tuple[str, str, str] | None:
     if not key:
         return None
     return provider, model, key
+
+
+def _max_calls_per_run() -> int:
+    raw = os.environ.get("LLM_MAX_CALLS_PER_RUN", "8").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 8
+
+
+def _failure_limit() -> int:
+    raw = os.environ.get("LLM_FAILURE_LIMIT", "2").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 2
+
+
+def _trip_llm_circuit(reason: str) -> None:
+    """Disable optional network enrichment for the remainder of this process."""
+    global _LLM_BLOCKED_REASON
+    if _LLM_BLOCKED_REASON:
+        return
+    _LLM_BLOCKED_REASON = reason
+    print(f"  [llm_jd] {reason}; disabling LLM enrichment for the rest of this run.")
+
+
+def _reserve_llm_call() -> bool:
+    global _LLM_CALLS_THIS_RUN
+    limit = _max_calls_per_run()
+    if _LLM_CALLS_THIS_RUN >= limit:
+        _trip_llm_circuit(f"per-run call budget ({limit}) reached")
+        return False
+    _LLM_CALLS_THIS_RUN += 1
+    return True
+
+
+def _record_llm_success() -> None:
+    global _LLM_CONSECUTIVE_FAILURES
+    _LLM_CONSECUTIVE_FAILURES = 0
+
+
+def _record_llm_failure(error: Exception) -> None:
+    global _LLM_CONSECUTIVE_FAILURES
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None)
+    if status == 429:
+        _trip_llm_circuit("provider rate limit reached")
+        return
+    if status in {400, 401, 403, 404}:
+        _trip_llm_circuit(f"provider rejected requests with HTTP {status}")
+        return
+    _LLM_CONSECUTIVE_FAILURES += 1
+    if _LLM_CONSECUTIVE_FAILURES >= _failure_limit():
+        _trip_llm_circuit(
+            f"provider failed {_LLM_CONSECUTIVE_FAILURES} consecutive calls"
+        )
 
 
 def _needs_enrichment(description: str, exp_years: str, salary: str) -> bool:
@@ -162,6 +231,8 @@ def _build_prompt(title: str, location: str, description: str) -> str:
 
 
 def llm_enabled() -> bool:
+    if _LLM_BLOCKED_REASON:
+        return False
     if os.environ.get("LLM_JD_DISABLE", "").strip().lower() in ("1", "true", "yes"):
         return False
     return _llm_config() is not None
@@ -189,7 +260,7 @@ def enrich_job(
     del company  # reserved for future company-aware prompts
     base = Path(__file__).parent
     empty: dict = {"keep": True}
-    if not llm_enabled() or not (description or "").strip():
+    if not (description or "").strip():
         return empty
     if len(description.strip()) < 80:
         return empty
@@ -197,11 +268,15 @@ def enrich_job(
     cache = _load_cache(base)
     if url and url in cache:
         return cache[url]
+    if not llm_enabled():
+        return empty
 
     from llm_http import redact_secrets
 
     cfg = _llm_config()
     if not cfg:
+        return empty
+    if not _reserve_llm_call():
         return empty
 
     provider, model, api_key = cfg
@@ -218,11 +293,13 @@ def enrich_job(
             raw = _call_anthropic(model, api_key, prompt)
         parsed = _parse_llm_json(raw)
     except Exception as e:
+        _record_llm_failure(e)
         label = url[:60] if url else (title or "")[:40]
         msg = redact_secrets(str(getattr(e, "response", e) or e))
         print(f"  [llm_jd] skip {label}… ({type(e).__name__}: {msg[:120]})")
         return empty
 
+    _record_llm_success()
     out: dict = {"keep": parsed.get("keep", True) is not False}
     if parsed.get("exp_years") is not None:
         try:
@@ -269,14 +346,17 @@ def enrich_from_description(
     if not _needs_enrichment(description, exp_years, salary):
         return {}
 
-    cfg = _llm_config()
-    if not cfg:
-        return {}
-
     cache = _load_cache(base)
     if url and url in cache:
         return cache[url]
 
+    cfg = _llm_config()
+    if not cfg:
+        return {}
+    if _LLM_BLOCKED_REASON or not _reserve_llm_call():
+        return {}
+
+    from llm_http import redact_secrets
     provider, model, api_key = cfg
     prompt = _build_prompt(title, location, description)
     try:
@@ -288,10 +368,12 @@ def enrich_from_description(
             raw = _call_anthropic(model, api_key, prompt)
         parsed = _parse_llm_json(raw)
     except Exception as e:
+        _record_llm_failure(e)
         msg = redact_secrets(str(getattr(e, "response", e) or e))
         print(f"  [llm_jd] skip {url[:60]}… ({type(e).__name__}: {msg[:120]})")
         return {}
 
+    _record_llm_success()
     out: dict = {}
     if not exp_years and parsed.get("exp_years") is not None:
         try:
