@@ -26,19 +26,33 @@ STAFFING_COMPANY_TOKENS = (
     "blubridge",
     "careersprint",
     "hackajob",
+    # Repost/training portals repeatedly seen masking the actual employer.
+    "ibrowsejobs",
+    "wonksknow",
+    "placement services",
+    "placement consultancy",
+    "recruitment services",
+    "recruitment agency",
+    "staffing services",
+    "confidential client",
 )
 
 # Bootcamp / trainee spam titles.
 BOOTCAMP_TITLE_RE = re.compile(
     r"\b(?:qa trainee|trainee software|bootcamp|coding bootcamp|"
-    r"learn and earn|pay after placement|no experience required)\b",
+    r"learn and earn|pay after placement|no experience required|"
+    r"job guarantee|placement assistance)\b",
     re.I,
 )
 
 # Vague recruiter-style titles (actual employer unnamed).
 STAFFING_TITLE_RE = re.compile(
     r"\b(?:at a (?:fintech|startup|company)|hiring for|on behalf of|"
-    r"our client|client location|bench|contract role)\b",
+    r"our client|client location|bench|contract role|"
+    r"(?:python|java|software|technical|coding|programming|data science|"
+    r"machine learning) (?:trainer|instructor|faculty|tutor)|"
+    r"(?:reposted|sourced) (?:by|via) (?:a )?"
+    r"(?:staffing|recruiting|placement))\b",
     re.I,
 )
 

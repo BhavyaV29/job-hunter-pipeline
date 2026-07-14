@@ -1,4 +1,4 @@
-# Copy to preferences.yaml and edit. Used by llm_filter.py when LLM_FILTER=1.
+# Copy to preferences.yaml and edit. Used by preferences_filter.py when PREFERENCES_FILTER=1.
 
 blocklist_companies:
   - SynergisticIT
@@ -21,5 +21,5 @@ must_have_any:
 
 max_exp_years: 2
 
-# Companies you always want surfaced (+50 already in sources.yaml dream_companies)
+# Companies you always want surfaced (+15 already in sources.yaml dream_companies)
 priority_companies: []

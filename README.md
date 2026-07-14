@@ -71,14 +71,17 @@ durable tracker because the local filesystem can be replaced.
 > Public showcase? Set `DEMO_MODE=1` to serve read-only sample data — that's exactly
 > what the [live demo](https://job-hunter-pipeline.onrender.com) runs.
 
-### B) Terminal — one command a day
+### B) Terminal — one normal refresh
 
 ```bash
 cd job-hunter-pipeline
 cp .env.example .env                 # fill in the keys you have (all optional)
 set -a && source .env && set +a      # load them into your shell
-python3 morning.py --force           # fetch + score + Sheet sync + outreach drafts
+python3 morning.py                   # fetch + score + Sheet sync + outreach drafts
 ```
+
+Use `--no-fetch` to work an existing backlog without sourcing. Reserve `--force` for
+diagnostics: it bypasses source cooldowns but never the hard provider budgets.
 
 **What `morning.py` does, in order:**
 
